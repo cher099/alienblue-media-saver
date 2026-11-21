@@ -37,3 +37,25 @@ The preferred first prototype is therefore to hook `RAProtocol` and provide its 
 ## Source provenance
 
 Based on the user-provided RedAlien 0.0.4 source archive and package metadata. This document describes a proposed integration, not a tested implementation.
+
+
+## Prototype implementation status (2026-11-22)
+
+The add-on now contains an initial runtime hook prototype in `Tweak.xm`:
+
+- Hooks `RAProtocol +canInitWithRequest:` to recognize only `redgifs.com/watch/<id>` and `redgifs.com/ifr/<id>` URLs.
+- Hooks `RAProtocol -patchRequest:` and leaves every non-RedGIFs request on RedAlien's original implementation.
+- Requests a temporary RedGIFs API token, then requests `/v2/gifs/<id>` using the same User-Agent.
+- Sends the RedGIFs Referer, Origin, and `x-customheader` metadata headers; retries once after HTTP 401.
+- Prefers the SD media URL, falling back to HD, and returns a minimal HTML5 video page.
+
+### Not yet verified
+
+- The hook install assumes `RAProtocol` and both selectors exist when this tweak's constructor runs. The code logs and exits if they do not.
+- The current package filter bundle identifiers have not been confirmed on the target device.
+- The RedGIFs API calls have not yet been exercised from iOS 6.1.3.
+- Direct MP4 playback, media-host request validation, and H.264/AAC compatibility have not been tested on the iPhone 4S.
+- The implementation currently fetches a fresh temporary token per watch request; token caching is intentionally deferred.
+- Build success, if achieved, proves compilation/package creation only—not runtime hook installation or video playback.
+
+This is an experimental first functional increment, not a device-ready release.
