@@ -4,6 +4,9 @@
 #import <substrate.h>
 #import <mach-o/dyld.h>
 #import <dispatch/dispatch.h>
+#import <fcntl.h>
+#import <unistd.h>
+#import <errno.h>
 
 typedef BOOL (*RACanInitIMP)(id, SEL, NSURLRequest *);
 typedef void (*RAPatchRequestIMP)(id, SEL, NSMutableURLRequest *);
@@ -16,6 +19,22 @@ static BOOL RGHooksInstalled = NO;
 
 static NSString * const RGLogPath = @"/var/mobile/Library/Logs/RedGIFsCompat.log";
 static NSString * const RGLogDirectory = @"/var/mobile/Library/Logs";
+static NSString * const RGFallbackLogPath = @"/tmp/RedGIFsCompat.log";
+
+static void RGWriteLogFile(NSString *path, NSData *data) {
+    int fd = open([path fileSystemRepresentation], O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0) return;
+
+    const unsigned char *bytes = (const unsigned char *)[data bytes];
+    NSUInteger remaining = [data length];
+    while (remaining > 0) {
+        ssize_t written = write(fd, bytes, remaining);
+        if (written <= 0) break;
+        bytes += written;
+        remaining -= (NSUInteger)written;
+    }
+    close(fd);
+}
 
 static void RGLog(NSString *format, ...) {
     va_list args;
@@ -23,28 +42,21 @@ static void RGLog(NSString *format, ...) {
     NSString *message = [[[NSString alloc] initWithFormat:format arguments:args] autorelease];
     va_end(args);
 
-    NSString *line = [NSString stringWithFormat:@"%@ %@\n", [[NSDate date] description], message];
+    NSString *line = [NSString stringWithFormat:@"%@ %@\\n", [[NSDate date] description], message];
     NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+
     @synchronized([NSString class]) {
         NSFileManager *manager = [NSFileManager defaultManager];
         if (![manager fileExistsAtPath:RGLogDirectory]) {
             [manager createDirectoryAtPath:RGLogDirectory
                withIntermediateDirectories:YES attributes:nil error:nil];
         }
-        if (![manager fileExistsAtPath:RGLogPath]) {
-            [manager createFileAtPath:RGLogPath contents:nil attributes:nil];
-        }
-        NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:RGLogPath];
-        if (handle) {
-            @try {
-                [handle seekToEndOfFile];
-                [handle writeData:data];
-                [handle closeFile];
-            } @catch (NSException *exception) {
-                @try { [handle closeFile]; } @catch (NSException *ignored) {}
-            }
-        }
+        // Write to both locations so a missing/unwritable Library/Logs folder
+        // cannot hide whether MobileSubstrate loaded this tweak.
+        RGWriteLogFile(RGLogPath, data);
+        RGWriteLogFile(RGFallbackLogPath, data);
     }
+
     NSLog(@"[RedGIFsCompat] %@", message);
 }
 
@@ -127,7 +139,7 @@ static NSDictionary *RGJSONRequest(NSString *urlString,
 
     id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
     if (error || ![object isKindOfClass:[NSDictionary class]]) {
-        NSLog(@"%@API returned invalid JSON: %@", RGLogPrefix, error);
+        RGLog(@"API returned invalid JSON: %@", error);
         return nil;
     }
 
@@ -154,7 +166,7 @@ static NSString *RGResolveMP4(NSString *videoID, NSString *userAgent) {
     for (int attempt = 0; attempt < 2; attempt++) {
         NSDictionary *metadata = RGJSONRequest(gifURL, userAgent, token, apiWatchURL, &status);
         if (status == 401 && attempt == 0) {
-            NSLog(@"%@Temporary token rejected; refreshing once", RGLogPrefix);
+            RGLog(@"Temporary token rejected; refreshing once");
             auth = RGJSONRequest(tokenURL, userAgent, nil, nil, &status);
             token = [auth objectForKey:@"token"];
             if (![token isKindOfClass:[NSString class]] || !token.length) return nil;
@@ -172,7 +184,6 @@ static NSString *RGResolveMP4(NSString *videoID, NSString *userAgent) {
             return mediaURL;
         }
 
-        RGLog(@"No usable SD/HD media URL in metadata HTTP=%ld", (long)status);
         RGLog(@"No usable SD/HD media URL in GIF metadata (HTTP %ld)", (long)status);
         return nil;
     }
@@ -194,7 +205,7 @@ static NSString *RGHTMLEscapeURL(NSString *value) {
 static void RGRespondWithHTML(id protocol, NSString *html, NSInteger status) {
     SEL selector = @selector(respondWithStatus:headers:body:);
     if (![protocol respondsToSelector:selector]) {
-        NSLog(@"%@RAProtocol response method is unavailable", RGLogPrefix);
+        RGLog(@"RAProtocol response method is unavailable");
         return;
     }
 
@@ -237,11 +248,11 @@ static void RGHookPatchRequest(id self, SEL command, NSMutableURLRequest *reques
                            "<body style=\"margin:0;background:#000\"><video controls autoplay width=\"100%%\" "
                            "src=\"%@\"></video></body></html>", escapedURL];
         RGRespondWithHTML(self, html, 200);
-        NSLog(@"%@Resolved %@ to an MP4 URL", RGLogPrefix, videoID);
+        RGLog(@"Resolved %@ to an MP4 URL", videoID);
     } else {
         NSString *html = @"<!doctype html><html><body style=\"font-family:sans-serif\"><p>Unable to load this RedGIFs video. Please try again later.</p></body></html>";
         RGRespondWithHTML(self, html, 502);
-        NSLog(@"%@Resolution failed for %@", RGLogPrefix, videoID);
+        RGLog(@"Resolution failed for %@", videoID);
     }
 
     [pool drain];
@@ -252,7 +263,7 @@ static void RGInstallHooks(void) {
         if (RGHooksInstalled) return;
 
         Class protocolClass = NSClassFromString(@"RAProtocol");
-        if (!protocolClass) { RGLog(@"RAProtocol class not found yet"); return; }
+        if (!protocolClass) { return; }
 
         Method classMethod = class_getClassMethod(protocolClass, @selector(canInitWithRequest:));
         Method instanceMethod = class_getInstanceMethod(protocolClass, @selector(patchRequest:));
