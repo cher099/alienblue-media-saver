@@ -12,6 +12,42 @@ static RACanInitIMP OriginalCanInitWithRequest = NULL;
 static RAPatchRequestIMP OriginalPatchRequest = NULL;
 static BOOL RGHooksInstalled = NO;
 
+#import <stdarg.h>
+
+static NSString * const RGLogPath = @"/var/mobile/Library/Logs/RedGIFsCompat.log";
+static NSString * const RGLogDirectory = @"/var/mobile/Library/Logs";
+
+static void RGLog(NSString *format, ...) {
+    va_list args;
+    va_start(args, format);
+    NSString *message = [[[NSString alloc] initWithFormat:format arguments:args] autorelease];
+    va_end(args);
+
+    NSString *line = [NSString stringWithFormat:@"%@ %@\\n", [[NSDate date] description], message];
+    NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+    @synchronized([NSString class]) {
+        NSFileManager *manager = [NSFileManager defaultManager];
+        if (![manager fileExistsAtPath:RGLogDirectory]) {
+            [manager createDirectoryAtPath:RGLogDirectory
+               withIntermediateDirectories:YES attributes:nil error:nil];
+        }
+        if (![manager fileExistsAtPath:RGLogPath]) {
+            [manager createFileAtPath:RGLogPath contents:nil attributes:nil];
+        }
+        NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:RGLogPath];
+        if (handle) {
+            @try {
+                [handle seekToEndOfFile];
+                [handle writeData:data];
+                [handle closeFile];
+            } @catch (NSException *exception) {
+                @try { [handle closeFile]; } @catch (NSException *ignored) {}
+            }
+        }
+    }
+    NSLog(@"[RedGIFsCompat] %@", message);
+}
+
 static NSString * const RGLogPrefix = @"[RedGIFsCompat] ";
 static NSString * const RGAPIBase = @"https://api.redgifs.com/v2";
 static NSString * const RGReferer = @"https://www.redgifs.com/";
@@ -136,7 +172,7 @@ static NSString *RGResolveMP4(NSString *videoID, NSString *userAgent) {
             return mediaURL;
         }
 
-        NSLog(@"%@No usable SD/HD media URL in GIF metadata (HTTP %ld)", RGLogPrefix, (long)status);
+        RGLog(@"No usable SD/HD media URL in metadata HTTP=%ld", (long)status);\n        NSLog(@"%@No usable SD/HD media URL in GIF metadata (HTTP %ld)", RGLogPrefix, (long)status);
         return nil;
     }
 
@@ -189,7 +225,7 @@ static void RGHookPatchRequest(id self, SEL command, NSMutableURLRequest *reques
         return;
     }
     NSString *userAgent = [request valueForHTTPHeaderField:@"User-Agent"];
-    NSLog(@"%@Resolving RedGIFs ID %@", RGLogPrefix, videoID);
+    RGLog(@"Resolving RedGIFs ID=%@", videoID);\n    NSLog(@"%@Resolving RedGIFs ID %@", RGLogPrefix, videoID);
 
     NSString *mediaURL = RGResolveMP4(videoID, userAgent);
     if (mediaURL.length) {
@@ -214,7 +250,7 @@ static void RGInstallHooks(void) {
         if (RGHooksInstalled) return;
 
         Class protocolClass = NSClassFromString(@"RAProtocol");
-        if (!protocolClass) return;
+        if (!protocolClass) { RGLog(@"RAProtocol class not found yet"); return; }
 
         Method classMethod = class_getClassMethod(protocolClass, @selector(canInitWithRequest:));
         Method instanceMethod = class_getInstanceMethod(protocolClass, @selector(patchRequest:));
