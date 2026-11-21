@@ -1,0 +1,39 @@
+name: Build iOS tweak
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang git perl make xz-utils
+
+      - name: Install Theos
+        run: |
+          git clone --depth 1 https://github.com/theos/theos.git "$GITHUB_WORKSPACE/theos"
+          echo "THEOS=$GITHUB_WORKSPACE/theos" >> "$GITHUB_ENV"
+          echo "$GITHUB_WORKSPACE/theos/bin" >> "$GITHUB_PATH"
+
+      - name: Install iOS SDKs
+        run: |
+          git clone --depth 1 https://github.com/theos/sdks.git "$THEOS/sdks"
+
+      - name: Build package
+        run: |
+          make package FINALPACKAGE=1
+
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedGIFsCompat-deb
+          path: packages/*.deb
+          if-no-files-found: error
