@@ -61,7 +61,6 @@ static void RGLog(NSString *format, ...) {
     NSLog(@"[RedGIFsCompat] %@", message);
 }
 
-static NSString * const RGLogPrefix = @"[RedGIFsCompat] ";
 static NSString * const RGAPIBase = @"https://api.redgifs.com/v2";
 static NSString * const RGReferer = @"https://www.redgifs.com/";
 
