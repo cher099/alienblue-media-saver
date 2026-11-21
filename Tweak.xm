@@ -115,13 +115,13 @@ static NSDictionary *RGJSONRequest(NSString *urlString,
     }
 
     if (error || !data.length) {
-        NSLog(@"%@API request failed: %@", RGLogPrefix, error);
+        RGLog(@"API request failed: %@", error);
         return nil;
     }
 
     NSInteger httpStatus = [(NSHTTPURLResponse *)response statusCode];
     if (httpStatus < 200 || httpStatus >= 300) {
-        NSLog(@"%@API returned HTTP %ld", RGLogPrefix, (long)httpStatus);
+        RGLog(@"API returned HTTP %ld", (long)httpStatus);
         return nil;
     }
 
@@ -145,7 +145,7 @@ static NSString *RGResolveMP4(NSString *videoID, NSString *userAgent) {
     NSDictionary *auth = RGJSONRequest(tokenURL, userAgent, nil, nil, &status);
     NSString *token = [auth objectForKey:@"token"];
     if (![token isKindOfClass:[NSString class]] || !token.length) {
-        NSLog(@"%@Could not obtain temporary API token (HTTP %ld)", RGLogPrefix, (long)status);
+        RGLog(@"Could not obtain temporary API token (HTTP %ld)", (long)status);
         return nil;
     }
 
@@ -173,7 +173,7 @@ static NSString *RGResolveMP4(NSString *videoID, NSString *userAgent) {
         }
 
         RGLog(@"No usable SD/HD media URL in metadata HTTP=%ld", (long)status);
-        NSLog(@"%@No usable SD/HD media URL in GIF metadata (HTTP %ld)", RGLogPrefix, (long)status);
+        RGLog(@"No usable SD/HD media URL in GIF metadata (HTTP %ld)", (long)status);
         return nil;
     }
 
@@ -208,7 +208,7 @@ static void RGRespondWithHTML(id protocol, NSString *html, NSInteger status) {
 
 static BOOL RGHookCanInitWithRequest(id self, SEL command, NSURLRequest *request) {
     if (RGVideoIDFromURL(request.URL)) {
-        NSLog(@"%@Recognized RedGIFs watch URL: %@", RGLogPrefix, request.URL);
+        RGLog(@"Recognized RedGIFs URL host=%@ path=%@", request.URL.host, request.URL.path);
         return YES;
     }
     return OriginalCanInitWithRequest ? OriginalCanInitWithRequest(self, command, request) : NO;
@@ -257,7 +257,7 @@ static void RGInstallHooks(void) {
         Method classMethod = class_getClassMethod(protocolClass, @selector(canInitWithRequest:));
         Method instanceMethod = class_getInstanceMethod(protocolClass, @selector(patchRequest:));
         if (!classMethod || !instanceMethod) {
-            NSLog(@"%@RAProtocol found, but expected selectors are not available yet", RGLogPrefix);
+            RGLog(@"RAProtocol found, but expected selectors are not available yet");
             return;
         }
 
@@ -272,9 +272,9 @@ static void RGInstallHooks(void) {
 
         if (OriginalCanInitWithRequest && OriginalPatchRequest) {
             RGHooksInstalled = YES;
-            NSLog(@"%@Installed RAProtocol RedGIFs hooks", RGLogPrefix);
+            RGLog(@"Installed RAProtocol RedGIFs hooks");
         } else {
-            NSLog(@"%@RAProtocol hook installation did not return original IMPs", RGLogPrefix);
+            RGLog(@"RAProtocol hook installation did not return original IMPs");
         }
     }
 }
@@ -295,8 +295,7 @@ static void RGImageAdded(const struct mach_header *header, intptr_t slide) {
 
     NSString *processName = [[NSProcessInfo processInfo] processName];
     NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
-    NSLog(@"%@Loaded in process=%@ bundle=%@",
-          RGLogPrefix,
+    RGLog(@"Loaded in process=%@ bundle=%@",
           processName ? processName : @"(unknown)",
           bundleID ? bundleID : @"(unknown)");
 
