@@ -2,7 +2,7 @@
 
 A standalone compatibility add-on intended to make RedGIFs links playable in AlienBlue when used alongside RedAlien 0.0.4 on legacy jailbroken iOS devices.
 
-> **Status: early development.** No working RedGIFs interception, media resolver, or installable add-on package has been validated yet.
+> **Status: integration implementation in progress.** RedGIFs interception and API resolution have been verified on-device. This branch adds a RedAlien-compatible download, FFmpeg remux, cache, loading-status, and local-player handoff. End-to-end playback still requires device testing.
 
 ## Project goals
 
@@ -40,11 +40,11 @@ Compatibility with this environment must be confirmed by actual builds and devic
 1. URL detection for supported RedGIFs hosts and watch-link formats.
 2. GIF ID parsing and URL normalization.
 3. RedGIFs media resolution, including error handling.
-4. A verified handoff to an existing player or a self-contained playback path.
+4. Download the resolved MP4 to a separate RedAlien cache directory (`/var/tmp/redalien/redgifs-<id>`).\n5. Reuse the installed `dev.spytaspund.ffmpeg` executable to remux the single-file MP4 without re-encoding.\n6. Reuse RedAlien's `vLoading.html`, `status.js` route through `v.redd.it`, local HTTP server, and `vPlayer.html` for playback.
 5. Separate package metadata and installation files.
 6. Automated ARMv7 build and package artifact upload.
 
-The exact hook and playback architecture remains undecided pending source inspection and compatibility testing.
+The implementation deliberately leaves the original RedAlien package and files untouched. It uses a `redgifs-` cache prefix to avoid collisions with Reddit video IDs. The first implementation remuxes with stream copy; it does not yet transcode unsupported codecs. Successful API resolution and a successful build do not prove that the resulting video plays on iOS 6.1.3.
 
 ## Repository layout (planned)
 
@@ -73,7 +73,7 @@ No release package is available yet. Do not install placeholder or experimental 
 ## Testing checklist
 
 - [ ] Confirm RedAlien 0.0.4 source and package metadata.
-- [ ] Identify safe integration points without modifying RedAlien.
+- [x] Identify safe integration points without modifying RedAlien.
 - [ ] Verify RedGIFs link formats and media-resolution behavior.
 - [ ] Verify the resolved media codec/container is compatible with iOS 6.1.3.
 - [ ] Build an ARMv7 package in GitHub Actions.
