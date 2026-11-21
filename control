@@ -1,0 +1,9 @@
+Package: dev.cherwin.redalien.redgifs
+Name: RedAlien RedGIFs Compatibility
+Version: 0.1.0
+Architecture: iphoneos-arm
+Description: Experimental RedGIFs compatibility add-on for RedAlien.
+Maintainer: cher099
+Author: cher099
+Section: Tweaks
+Depends: mobilesubstrate, firmware (>= 3.0), dev.spytaspund.redalien (>= 0.0.4)
