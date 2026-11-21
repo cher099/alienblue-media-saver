@@ -80,6 +80,12 @@ static NSDictionary *RGJSONRequest(NSString *urlString,
         return nil;
     }
 
+    NSInteger httpStatus = [(NSHTTPURLResponse *)response statusCode];
+    if (httpStatus < 200 || httpStatus >= 300) {
+        NSLog(@"%@API returned HTTP %ld", RGLogPrefix, (long)httpStatus);
+        return nil;
+    }
+
     id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
     if (error || ![object isKindOfClass:[NSDictionary class]]) {
         NSLog(@"%@API returned invalid JSON: %@", RGLogPrefix, error);
@@ -166,13 +172,16 @@ static BOOL RGHookCanInitWithRequest(id self, SEL command, NSURLRequest *request
 }
 
 static void RGHookPatchRequest(id self, SEL command, NSMutableURLRequest *request) {
+    // RAProtocol invokes patchRequest: on a background thread. Establish the
+    // autorelease pool before URL parsing creates any autoreleased objects.
+    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+
     NSString *videoID = RGVideoIDFromURL(request.URL);
     if (!videoID) {
         if (OriginalPatchRequest) OriginalPatchRequest(self, command, request);
+        [pool drain];
         return;
     }
-
-    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
     NSString *watchURL = [request.URL absoluteString];
     NSString *userAgent = [request valueForHTTPHeaderField:@"User-Agent"];
     NSLog(@"%@Resolving RedGIFs ID %@", RGLogPrefix, videoID);
