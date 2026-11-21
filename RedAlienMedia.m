@@ -208,10 +208,14 @@ static void *RGWorker(void *arg) {
     NSString *log = [dir stringByAppendingPathComponent:@"ffmpeg.log"];
     NSError *downloadError = nil;
     BOOL ok = dir && RGDownload(mediaURL, source, userAgent, &downloadError);
-    if (!ok) {
+    if (!dir) {
+        RGLOG(@"Could not prepare cache directory for %@", videoID);
+    } else if (!ok) {
         RGLOG(@"Download failed for %@: %@", videoID, downloadError);
         RGStatus(dir, 0, [NSString stringWithFormat:@"Download failed: %@", [downloadError localizedDescription] ?: @"unknown error"], YES);
     } else {
+        NSDictionary *sourceAttributes = [[NSFileManager defaultManager] attributesOfItemAtPath:source error:nil];
+        RGLOG(@"Downloaded RedGIFs source: %llu bytes", [[sourceAttributes objectForKey:NSFileSize] unsignedLongLongValue]);
         RGStatus(dir, 35, @"Preparing video with RedAlien FFmpeg...", NO);
         [[NSFileManager defaultManager] removeItemAtPath:temp error:nil];
         ok = RGRunFFmpeg(source, temp, log) && RGValidMP4(temp);
