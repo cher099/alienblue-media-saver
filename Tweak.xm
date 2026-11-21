@@ -7,6 +7,7 @@
 #import <fcntl.h>
 #import <unistd.h>
 #import <errno.h>
+#import "RedAlienMedia.h"
 
 typedef BOOL (*RACanInitIMP)(id, SEL, NSURLRequest *);
 typedef void (*RAPatchRequestIMP)(id, SEL, NSMutableURLRequest *);
@@ -191,17 +192,6 @@ static NSString *RGResolveMP4(NSString *videoID, NSString *userAgent) {
     return nil;
 }
 
-static NSString *RGHTMLEscapeURL(NSString *value) {
-    NSMutableString *escaped = [NSMutableString stringWithString:value];
-    [escaped replaceOccurrencesOfString:@"&" withString:@"&amp;"
-                                options:0 range:NSMakeRange(0, [escaped length])];
-    [escaped replaceOccurrencesOfString:@"<" withString:@"&lt;"
-                                options:0 range:NSMakeRange(0, [escaped length])];
-    [escaped replaceOccurrencesOfString:@"\"" withString:@"&quot;"
-                                options:0 range:NSMakeRange(0, [escaped length])];
-    return escaped;
-}
-
 static void RGRespondWithHTML(id protocol, NSString *html, NSInteger status) {
     SEL selector = @selector(respondWithStatus:headers:body:);
     if (![protocol respondsToSelector:selector]) {
@@ -226,8 +216,6 @@ static BOOL RGHookCanInitWithRequest(id self, SEL command, NSURLRequest *request
 }
 
 static void RGHookPatchRequest(id self, SEL command, NSMutableURLRequest *request) {
-    // RAProtocol invokes patchRequest: on a background thread. Establish the
-    // autorelease pool before URL parsing creates any autoreleased objects.
     NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
 
     NSString *videoID = RGVideoIDFromURL(request.URL);
@@ -236,23 +224,26 @@ static void RGHookPatchRequest(id self, SEL command, NSMutableURLRequest *reques
         [pool drain];
         return;
     }
-    NSString *userAgent = [request valueForHTTPHeaderField:@"User-Agent"];
-    RGLog(@"Resolving RedGIFs ID=%@", videoID);
-    NSLog(@"%@Resolving RedGIFs ID %@", RGLogPrefix, videoID);
 
-    NSString *mediaURL = RGResolveMP4(videoID, userAgent);
-    if (mediaURL.length) {
-        NSString *escapedURL = RGHTMLEscapeURL(mediaURL);
-        NSString *html = [NSString stringWithFormat:
-                          @"<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head>"
-                           "<body style=\"margin:0;background:#000\"><video controls autoplay width=\"100%%\" "
-                           "src=\"%@\"></video></body></html>", escapedURL];
+    NSString *userAgent = [request valueForHTTPHeaderField:@"User-Agent"];
+    // First check RedAlien's shared cache/worker state. Avoid repeating the
+    // RedGIFs API lookup when a download is already running or cached.
+    NSString *html = RGPlaybackHTMLForVideo(videoID, nil, userAgent);
+    if (!html) {
+        RGLog(@"Resolving RedGIFs ID=%@", videoID);
+        NSString *mediaURL = RGResolveMP4(videoID, userAgent);
+        if (mediaURL.length) {
+            html = RGPlaybackHTMLForVideo(videoID, mediaURL, userAgent);
+        }
+    }
+
+    if (html.length) {
         RGRespondWithHTML(self, html, 200);
-        RGLog(@"Resolved %@ to an MP4 URL", videoID);
+        RGLog(@"Handed RedGIFs %@ to RedAlien local playback pipeline", videoID);
     } else {
-        NSString *html = @"<!doctype html><html><body style=\"font-family:sans-serif\"><p>Unable to load this RedGIFs video. Please try again later.</p></body></html>";
-        RGRespondWithHTML(self, html, 502);
-        RGLog(@"Resolution failed for %@", videoID);
+        NSString *errorHTML = @"<!doctype html><html><body style=\"font-family:sans-serif\"><p>Unable to prepare this RedGIFs video. Please try again later.</p></body></html>";
+        RGRespondWithHTML(self, errorHTML, 502);
+        RGLog(@"Could not start RedAlien playback pipeline for %@", videoID);
     }
 
     [pool drain];
