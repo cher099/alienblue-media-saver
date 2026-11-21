@@ -2,12 +2,15 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <substrate.h>
+#import <mach-o/dyld.h>
+#import <dispatch/dispatch.h>
 
 typedef BOOL (*RACanInitIMP)(id, SEL, NSURLRequest *);
 typedef void (*RAPatchRequestIMP)(id, SEL, NSMutableURLRequest *);
 
 static RACanInitIMP OriginalCanInitWithRequest = NULL;
 static RAPatchRequestIMP OriginalPatchRequest = NULL;
+static BOOL RGHooksInstalled = NO;
 
 static NSString * const RGLogPrefix = @"[RedGIFsCompat] ";
 static NSString * const RGAPIBase = @"https://api.redgifs.com/v2";
@@ -207,29 +210,46 @@ static void RGHookPatchRequest(id self, SEL command, NSMutableURLRequest *reques
 }
 
 static void RGInstallHooks(void) {
-    Class protocolClass = NSClassFromString(@"RAProtocol");
-    if (!protocolClass) {
-        NSLog(@"%@RAProtocol class not found; add-on hooks were not installed", RGLogPrefix);
-        return;
+    @synchronized([NSObject class]) {
+        if (RGHooksInstalled) return;
+
+        Class protocolClass = NSClassFromString(@"RAProtocol");
+        if (!protocolClass) return;
+
+        Method classMethod = class_getClassMethod(protocolClass, @selector(canInitWithRequest:));
+        Method instanceMethod = class_getInstanceMethod(protocolClass, @selector(patchRequest:));
+        if (!classMethod || !instanceMethod) {
+            NSLog(@"%@RAProtocol found, but expected selectors are not available yet", RGLogPrefix);
+            return;
+        }
+
+        MSHookMessageEx(object_getClass(protocolClass),
+                        @selector(canInitWithRequest:),
+                        (IMP)RGHookCanInitWithRequest,
+                        (IMP *)&OriginalCanInitWithRequest);
+        MSHookMessageEx(protocolClass,
+                        @selector(patchRequest:),
+                        (IMP)RGHookPatchRequest,
+                        (IMP *)&OriginalPatchRequest);
+
+        if (OriginalCanInitWithRequest && OriginalPatchRequest) {
+            RGHooksInstalled = YES;
+            NSLog(@"%@Installed RAProtocol RedGIFs hooks", RGLogPrefix);
+        } else {
+            NSLog(@"%@RAProtocol hook installation did not return original IMPs", RGLogPrefix);
+        }
     }
+}
 
-    Method classMethod = class_getClassMethod(protocolClass, @selector(canInitWithRequest:));
-    Method instanceMethod = class_getInstanceMethod(protocolClass, @selector(patchRequest:));
-    if (!classMethod || !instanceMethod) {
-        NSLog(@"%@RAProtocol does not expose the expected hook methods", RGLogPrefix);
-        return;
-    }
-
-    MSHookMessageEx(object_getClass(protocolClass),
-                    @selector(canInitWithRequest:),
-                    (IMP)RGHookCanInitWithRequest,
-                    (IMP *)&OriginalCanInitWithRequest);
-    MSHookMessageEx(protocolClass,
-                    @selector(patchRequest:),
-                    (IMP)RGHookPatchRequest,
-                    (IMP *)&OriginalPatchRequest);
-
-    NSLog(@"%@Installed RAProtocol RedGIFs hooks", RGLogPrefix);
+// RAProtocol can be registered by RedAlien after our constructor runs.
+// dyld notifies us for existing and subsequently loaded images. Defer the
+// runtime lookup to a worker queue rather than doing hook work in dyld's callback.
+static void RGImageAdded(const struct mach_header *header, intptr_t slide) {
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+        RGInstallHooks();
+        [pool drain];
+    });
 }
 
 %ctor {
@@ -243,5 +263,6 @@ static void RGInstallHooks(void) {
           bundleID ? bundleID : @"(unknown)");
 
     RGInstallHooks();
+    _dyld_register_func_for_add_image(RGImageAdded);
     [pool drain];
 }
