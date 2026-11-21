@@ -160,11 +160,13 @@ static BOOL RGRunFFmpeg(NSString *input, NSString *output, NSString *log) {
     NSString *cmd = [NSString stringWithFormat:
         @"ffmpeg -nostdin -hide_banner -loglevel warning -y -i %@ -c copy -movflags +faststart -f mp4 %@ 2> %@",
         RGQuote(input), RGQuote(output), RGQuote(log)];
+    const char *command = [cmd UTF8String];
+    if (!command) return NO;
     pid_t pid = fork();
     if (pid == 0) {
         int fd = open("/dev/null", O_WRONLY);
         if (fd >= 0) { dup2(fd, STDOUT_FILENO); close(fd); }
-        execl("/bin/sh", "sh", "-c", [cmd UTF8String], (char *)NULL); _exit(127);
+        execl("/bin/sh", "sh", "-c", command, (char *)NULL); _exit(127);
     }
     if (pid < 0) { RGLOG(@"FFmpeg fork failed: errno=%d", errno); return NO; }
     int status = 0; pid_t result;
