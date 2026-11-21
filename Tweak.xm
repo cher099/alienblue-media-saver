@@ -232,6 +232,7 @@ static void RGHookPatchRequest(id self, SEL command, NSMutableURLRequest *reques
         RGLog(@"Resolving RedGIFs ID=%@", videoID);
         NSString *mediaURL = RGResolveMP4(videoID, userAgent);
         if (mediaURL.length) {
+            RGLog(@"Resolved %@ to an MP4 URL; starting local download", videoID);
             html = RGPlaybackHTMLForVideo(videoID, mediaURL, userAgent);
         }
     }
