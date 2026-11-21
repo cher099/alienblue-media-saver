@@ -44,7 +44,7 @@ static NSMutableSet *RGBusy = nil;
 - (void)finish:(NSError *)error {
     if (_done) return;
     if (_file) {
-        @try { [_file synchronizeFile]; } @catch (NSException *e) {}
+        @try { [_file synchronizeFile]; } @catch (NSException *e) { (void)e; }
         [_file closeFile]; [_file release]; _file = nil;
     }
     if (error && !_error) _error = [error retain];
