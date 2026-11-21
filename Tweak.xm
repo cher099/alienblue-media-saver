@@ -23,7 +23,7 @@ static void RGLog(NSString *format, ...) {
     NSString *message = [[[NSString alloc] initWithFormat:format arguments:args] autorelease];
     va_end(args);
 
-    NSString *line = [NSString stringWithFormat:@"%@ %@\\n", [[NSDate date] description], message];
+    NSString *line = [NSString stringWithFormat:@"%@ %@\n", [[NSDate date] description], message];
     NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
     @synchronized([NSString class]) {
         NSFileManager *manager = [NSFileManager defaultManager];
@@ -172,7 +172,8 @@ static NSString *RGResolveMP4(NSString *videoID, NSString *userAgent) {
             return mediaURL;
         }
 
-        RGLog(@"No usable SD/HD media URL in metadata HTTP=%ld", (long)status);\n        NSLog(@"%@No usable SD/HD media URL in GIF metadata (HTTP %ld)", RGLogPrefix, (long)status);
+        RGLog(@"No usable SD/HD media URL in metadata HTTP=%ld", (long)status);
+        NSLog(@"%@No usable SD/HD media URL in GIF metadata (HTTP %ld)", RGLogPrefix, (long)status);
         return nil;
     }
 
