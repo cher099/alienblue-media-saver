@@ -9,5 +9,3 @@ RedGIFsCompat_FRAMEWORKS = Foundation
 RedGIFsCompat_CFLAGS = -fno-objc-arc
 
 include $(THEOS_MAKE_PATH)/tweak.mk
-
-include $(THEOS_MAKE_PATH)/aggregate.mk
