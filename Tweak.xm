@@ -95,9 +95,12 @@ static NSDictionary *RGJSONRequest(NSString *urlString,
     return (NSDictionary *)object;
 }
 
-static NSString *RGResolveMP4(NSString *videoID, NSString *userAgent, NSString *watchURL) {
+static NSString *RGResolveMP4(NSString *videoID, NSString *userAgent) {
     NSString *tokenURL = [RGAPIBase stringByAppendingString:@"/auth/temporary"];
     NSString *gifURL = [NSString stringWithFormat:@"%@/gifs/%@", RGAPIBase, videoID];
+    // The API expects x-customheader to identify the canonical watch page,
+    // not an /ifr URL or an embed URL with extra query parameters.
+    NSString *apiWatchURL = [NSString stringWithFormat:@"https://www.redgifs.com/watch/%@", videoID];
 
     NSInteger status = 0;
     NSDictionary *auth = RGJSONRequest(tokenURL, userAgent, nil, nil, &status);
@@ -110,7 +113,7 @@ static NSString *RGResolveMP4(NSString *videoID, NSString *userAgent, NSString *
     // RedGIFs binds temporary tokens to the requesting IP and exact User-Agent.
     // Keep the same User-Agent for the token and metadata requests.
     for (int attempt = 0; attempt < 2; attempt++) {
-        NSDictionary *metadata = RGJSONRequest(gifURL, userAgent, token, watchURL, &status);
+        NSDictionary *metadata = RGJSONRequest(gifURL, userAgent, token, apiWatchURL, &status);
         if (status == 401 && attempt == 0) {
             NSLog(@"%@Temporary token rejected; refreshing once", RGLogPrefix);
             auth = RGJSONRequest(tokenURL, userAgent, nil, nil, &status);
@@ -186,7 +189,7 @@ static void RGHookPatchRequest(id self, SEL command, NSMutableURLRequest *reques
     NSString *userAgent = [request valueForHTTPHeaderField:@"User-Agent"];
     NSLog(@"%@Resolving RedGIFs ID %@", RGLogPrefix, videoID);
 
-    NSString *mediaURL = RGResolveMP4(videoID, userAgent, watchURL);
+    NSString *mediaURL = RGResolveMP4(videoID, userAgent);
     if (mediaURL.length) {
         NSString *escapedURL = RGHTMLEscapeURL(mediaURL);
         NSString *html = [NSString stringWithFormat:
