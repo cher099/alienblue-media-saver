@@ -1,0 +1,11 @@
+{
+    Filter = {
+        Bundles = (
+            "com.designshed.alienblue",
+            "com.designshed.alienbluehd",
+            "com.reddit.alienblue",
+            "com.reddit.alienbluehd",
+            "com.apple.WebKit.Networking"
+        );
+    };
+}
