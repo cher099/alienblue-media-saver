@@ -42,7 +42,7 @@ static void RGLog(NSString *format, ...) {
     NSString *message = [[[NSString alloc] initWithFormat:format arguments:args] autorelease];
     va_end(args);
 
-    NSString *line = [NSString stringWithFormat:@"%@ %@\\n", [[NSDate date] description], message];
+    NSString *line = [NSString stringWithFormat:@"%@ %@\n", [[NSDate date] description], message];
     NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
 
     @synchronized([NSString class]) {
