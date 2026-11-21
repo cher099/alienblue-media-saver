@@ -185,7 +185,6 @@ static void RGHookPatchRequest(id self, SEL command, NSMutableURLRequest *reques
         [pool drain];
         return;
     }
-    NSString *watchURL = [request.URL absoluteString];
     NSString *userAgent = [request valueForHTTPHeaderField:@"User-Agent"];
     NSLog(@"%@Resolving RedGIFs ID %@", RGLogPrefix, videoID);
 
