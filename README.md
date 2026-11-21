@@ -46,8 +46,8 @@ GitHub Actions builds the ARMv7 package on pushes to the main and integration br
 - [x] Inspect RedAlien 0.0.4 source and package metadata.
 - [x] Verify the existing RedAlien cache, status, local-server, and player-template interfaces.
 - [x] Verify the diagnostic add-on loads and resolves RedGIFs MP4 URLs on-device.
-- [ ] Build the FFmpeg playback integration for ARMv7.
-- [ ] Inspect the generated Debian package and dependency metadata.
+- [x] Build the FFmpeg playback integration for ARMv7.
+- [x] Inspect the generated Debian package and dependency metadata.
 - [ ] Confirm the device can download the resolved MP4.
 - [ ] Confirm the installed FFmpeg executable can remux it.
 - [ ] Confirm the local server serves the resulting MP4 and status file.
