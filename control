@@ -6,4 +6,4 @@ Description: RedGIFs compatibility add-on using RedAlien's FFmpeg and local vide
 Maintainer: cher099
 Author: cher099
 Section: Tweaks
-Depends: mobilesubstrate, firmware (>= 3.0), dev.spytaspund.redalien (>= 0.0.4)
+Depends: mobilesubstrate, firmware (>= 3.0), dev.spytaspund.redalien (>= 0.0.4), dev.spytaspund.ffmpeg
