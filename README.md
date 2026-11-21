@@ -1,17 +1,8 @@
 # RedAlien RedGIFs Compatibility
 
-A standalone compatibility add-on intended to make RedGIFs links playable in AlienBlue when used alongside RedAlien 0.0.4 on legacy jailbroken iOS devices.
+A standalone compatibility add-on for RedGIFs links opened in AlienBlue alongside RedAlien 0.0.4.
 
-> **Status: integration implementation in progress.** RedGIFs interception and API resolution have been verified on-device. This branch adds a RedAlien-compatible download, FFmpeg remux, cache, loading-status, and local-player handoff. End-to-end playback still requires device testing.
-
-## Project goals
-
-- Detect RedGIFs watch links opened from AlienBlue.
-- Extract the RedGIFs GIF identifier.
-- Resolve a playable media URL using RedGIFs' available web/API behavior.
-- Hand off playback through a method compatible with legacy iOS.
-- Preserve the existing RedAlien installation and its files.
-- Build a separate Debian package (`.deb`) for testing.
+> **Status: implementation branch — build and device testing pending.** The existing diagnostic build has verified that the tweak loads in AlienBlue, hooks RAProtocol, recognizes RedGIFs URLs, and resolves an MP4 URL. This branch replaces the direct HTML5 remote-video response with RedAlien's local video playback flow.
 
 ## Target environment
 
@@ -20,73 +11,51 @@ A standalone compatibility add-on intended to make RedGIFs links playable in Ali
 | Device | iPhone 4S |
 | iOS | 6.1.3 |
 | CPU architecture | ARMv7 |
-| Existing player | AlienBlue |
+| Client | AlienBlue |
 | Existing tweak | RedAlien 0.0.4 |
 | Development host | Windows |
-| Build system | GitHub Actions (planned) |
+| Build system | GitHub Actions / Theos |
 
-Compatibility with this environment must be confirmed by actual builds and device tests.
+## Playback integration
 
-## Design constraints
+The add-on keeps its own package identifier and does not overwrite RedAlien files.
 
-1. **Do not overwrite RedAlien.** The add-on should have its own package identifier and install paths.
-2. **Verify integration before implementation.** RedAlien's internal functions are not automatically callable from a separate tweak. The integration point must be established from source and runtime behavior.
-3. **Use legacy-compatible media.** Prefer a media format and codec profile supported by iOS 6.1.3; do not assume every RedGIFs MP4 is compatible.
-4. **Treat RedGIFs API behavior as changeable.** Any unofficial endpoints, authentication flow, headers, or response fields must be tested and handled defensively.
-5. **Do not install untested builds on the primary device.** Keep the original RedAlien package available for recovery.
+1. Intercept a RedGIFs watch/iframe URL in `RAProtocol`.
+2. Resolve the RedGIFs MP4 URL using the existing API resolver.
+3. Download the MP4 to `/var/tmp/redalien/redgifs-<id>/source.mp4` using a streamed `NSURLConnection` download (150 MB safety limit).
+4. Invoke the already-installed `ffmpeg` executable supplied by RedAlien's `dev.spytaspund.ffmpeg` dependency. The initial implementation remuxes with stream copy and `+faststart`; it does not re-encode.
+5. Write the resulting `video.mp4` and `status.js` under the same cache root RedAlien already uses.
+6. Reuse RedAlien's `vLoading.html`, its `v.redd.it/<id>/status.js` status route, local HTTP server (including byte-range support), and `vPlayer.html`.
 
-## Planned architecture
+The `redgifs-` cache prefix keeps these files separate from ordinary Reddit video IDs. The add-on does not modify the original RedAlien package or its templates.
 
-1. URL detection for supported RedGIFs hosts and watch-link formats.
-2. GIF ID parsing and URL normalization.
-3. RedGIFs media resolution, including error handling.
-4. Download the resolved MP4 to a separate RedAlien cache directory (`/var/tmp/redalien/redgifs-<id>`).\n5. Reuse the installed `dev.spytaspund.ffmpeg` executable to remux the single-file MP4 without re-encoding.\n6. Reuse RedAlien's `vLoading.html`, `status.js` route through `v.redd.it`, local HTTP server, and `vPlayer.html` for playback.
-5. Separate package metadata and installation files.
-6. Automated ARMv7 build and package artifact upload.
+## Important compatibility notes
 
-The implementation deliberately leaves the original RedAlien package and files untouched. It uses a `redgifs-` cache prefix to avoid collisions with Reddit video IDs. The first implementation remuxes with stream copy; it does not yet transcode unsupported codecs. Successful API resolution and a successful build do not prove that the resulting video plays on iOS 6.1.3.
-
-## Repository layout (planned)
-
-```text
-.
-├── README.md
-├── Makefile
-├── control
-├── Tweak.x
-├── Sources/
-└── .github/
-    └── workflows/
-        └── build.yml
-```
-
-The layout will be adjusted to match the selected Theos project structure.
+- RedAlien's original `supportsCopy()` returns true on iOS 5 and later. This implementation initially follows that stream-copy approach rather than forcing a transcode.
+- A successful FFmpeg remux only confirms that an MP4 container was produced. It does **not** prove that the source codec/profile is supported by the iOS 6.1.3 native player.
+- If the copied streams do not play, the next experiment is a fallback transcode using a profile supported by the installed FFmpeg build and iOS 6.
+- RedGIFs API endpoints and CDN behavior are unofficial and may change.
+- Keep the original RedAlien package available for recovery. Do not install an artifact until the ARMv7 build and package contents have been inspected.
 
 ## Build
 
-Automated GitHub Actions builds are planned. The workflow must use a toolchain and SDK that can compile for the target iOS version and ARMv7. A successful workflow run is not sufficient by itself: the resulting package must also be inspected and tested on-device.
-
-## Installation
-
-No release package is available yet. Do not install placeholder or experimental packages. When a validated build is published, installation and removal instructions will be documented here.
+GitHub Actions builds the ARMv7 package on pushes to the main and integration branches, and on pull requests targeting main. A successful build is not equivalent to successful on-device playback.
 
 ## Testing checklist
 
-- [ ] Confirm RedAlien 0.0.4 source and package metadata.
-- [x] Identify safe integration points without modifying RedAlien.
-- [ ] Verify RedGIFs link formats and media-resolution behavior.
-- [ ] Verify the resolved media codec/container is compatible with iOS 6.1.3.
-- [ ] Build an ARMv7 package in GitHub Actions.
-- [ ] Inspect package identifier, dependencies, paths, and install scripts.
-- [ ] Test playback and failure handling on the iPhone 4S.
-- [ ] Confirm removing the add-on leaves RedAlien unchanged.
+- [x] Inspect RedAlien 0.0.4 source and package metadata.
+- [x] Verify the existing RedAlien cache, status, local-server, and player-template interfaces.
+- [x] Verify the diagnostic add-on loads and resolves RedGIFs MP4 URLs on-device.
+- [ ] Build the FFmpeg playback integration for ARMv7.
+- [ ] Inspect the generated Debian package and dependency metadata.
+- [ ] Confirm the device can download the resolved MP4.
+- [ ] Confirm the installed FFmpeg executable can remux it.
+- [ ] Confirm the local server serves the resulting MP4 and status file.
+- [ ] Confirm playback in AlienBlue on iOS 6.1.3.
+- [ ] Confirm ordinary Reddit video playback remains unchanged.
 
-## License and attribution
+## Upstream attribution
 
 RedAlien is a separate upstream project: https://github.com/spytaspund/redalien
 
-This repository is an independent compatibility project and is not an official RedAlien or RedGIFs release. Before copying or redistributing upstream source files, preserve their applicable copyright notices and license terms. The add-on's license will be declared after its source and dependency provenance are finalized.
-
-## Contributing
-
-Please document device/iOS versions, exact RedGIFs URL format, reproduction steps, and relevant logs when reporting an issue. Do not include account credentials, private tokens, or other secrets.
+This repository is an independent compatibility add-on, not an official RedAlien or RedGIFs release. The add-on reuses RedAlien's installed runtime dependency and installed HTML templates without copying or modifying its source files. Preserve upstream copyright and license notices if source files are ever copied into this repository.
