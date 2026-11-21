@@ -226,7 +226,8 @@ static void RGHookPatchRequest(id self, SEL command, NSMutableURLRequest *reques
         return;
     }
     NSString *userAgent = [request valueForHTTPHeaderField:@"User-Agent"];
-    RGLog(@"Resolving RedGIFs ID=%@", videoID);\n    NSLog(@"%@Resolving RedGIFs ID %@", RGLogPrefix, videoID);
+    RGLog(@"Resolving RedGIFs ID=%@", videoID);
+    NSLog(@"%@Resolving RedGIFs ID %@", RGLogPrefix, videoID);
 
     NSString *mediaURL = RGResolveMP4(videoID, userAgent);
     if (mediaURL.length) {
