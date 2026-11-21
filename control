@@ -1,6 +1,6 @@
 Package: dev.cherwin.redalien.redgifs
 Name: RedAlien RedGIFs Compatibility
-Version: 0.1.1
+Version: 0.1.2
 Architecture: iphoneos-arm
 Description: Diagnostic RedGIFs compatibility add-on for RedAlien with on-device logging.
 Maintainer: cher099
