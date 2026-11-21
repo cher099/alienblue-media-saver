@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #import <substrate.h>
 
 typedef BOOL (*RACanInitIMP)(id, SEL, NSURLRequest *);
