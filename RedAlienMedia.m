@@ -181,7 +181,7 @@ static NSString *RGTemplate(NSString *name) {
 }
 static NSString *RGLoadingHTML(NSString *videoID) {
     NSString *html = RGTemplate(@"vLoading.html");
-    NSString *statusURL = [NSString stringWithFormat:@"http://v.redd.it/redgifs-%@/status.js", videoID];
+    NSString *statusURL = [NSString stringWithFormat:@"https://v.redd.it/redgifs-%@/status.js", videoID];
     return html ? [html stringByReplacingOccurrencesOfString:@"{{STATUS_URL}}" withString:statusURL]
                 : @"<html><body>Preparing RedGIFs video...</body></html>";
 }
