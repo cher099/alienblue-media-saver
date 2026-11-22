@@ -2,7 +2,7 @@
 
 A standalone compatibility add-on for RedGIFs links opened in AlienBlue alongside RedAlien 0.0.4.
 
-> **Status:** RedGIFs playback is handed back to RedAlien's normal `vPlayer.html` interface after the MP4 is cached. Native Share-menu integration for **Save to Photos** is still in progress; the temporary save page has been removed.
+> **Status:** RedGIFs playback is handed back to RedAlien's normal `vPlayer.html` interface after the MP4 is cached. The native AlienBlue **Save to Photos** Share-menu action has been implemented and is awaiting on-device verification; the temporary save page has been removed.
 
 ## Target environment
 
@@ -29,7 +29,7 @@ The add-on does not replace the player with a separate Save to Photos page. The 
 
 ## Diagnostics
 
-The media worker writes to `/var/mobile/Library/Logs/RedGIFsCompat.log` and `/tmp/RedGIFsCompat.log`. It records download response/completion and byte count, FFmpeg exit status and stderr tail on failure, output MP4 validation and size, template availability, local server port, and status-poll requests. A `UIActionSheet` discovery probe records button titles, delegate class, and cancel-button index to identify AlienBlue's Share menu without modifying unrelated sheets.
+The tweak writes to `/var/mobile/Library/Logs/RedGIFsCompat.log` and `/tmp/RedGIFsCompat.log`. It records download response/completion and byte count, FFmpeg exit status and stderr tail on failure, output MP4 validation and size, template availability, local server port, and status-poll requests. Its `UIActionSheet` hook identifies AlienBlue's browser Share menu by its delegate and existing button titles, then adds **Save to Photos** only when a RedGIFs video ID is available.
 
 ## Important compatibility notes
 
@@ -41,7 +41,7 @@ The media worker writes to `/var/mobile/Library/Logs/RedGIFsCompat.log` and `/tm
 
 ## Native AlienBlue Share menu
 
-The intended UX is to add **Save to Photos** alongside AlienBlue's existing Share actions. The diagnostic hook logs `UIActionSheet` presentations through `showInView:`; it does not yet add a menu item. Once the exact menu and delegate callback are identified, the existing `ALAssetsLibrary` save routine can be connected to that action.
+The tweak targets AlienBlue's browser Share menu (the sheet containing **Open in Safari** and **Save to Reddit**) and adds **Save to Photos** when the active RedGIFs video has been identified. The selected action is handled by that sheet's delegate callback and calls the existing `ALAssetsLibrary` save routine for the cached MP4. Other action sheets are left unchanged. This integration still needs on-device testing.
 
 ## Upstream attribution
 
