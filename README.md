@@ -35,7 +35,7 @@ The tweak writes to `/var/mobile/Library/Logs/RedGIFsCompat.log` and `/tmp/RedGI
 
 - RedAlien's original `supportsCopy()` returns true on iOS 5 and later. This implementation initially follows that stream-copy approach rather than forcing a transcode.
 - A successful FFmpeg remux only confirms that an MP4 container was produced. It does **not** prove that the source codec/profile is supported by the iOS 6.1.3 native player.
-- When UIKit rejects the remuxed file, the add-on now retries with RedAlien-style MPEG-4 Simple Profile video, 480-pixel maximum dimension, and 20 fps. The final output is accepted only if UIKit reports it compatible with the device.
+- When UIKit rejects the remuxed file, the add-on now retries with RedAlien-style MPEG-4 Simple Profile video, 320-pixel maximum dimension, and 12 fps. The final output is accepted only if UIKit reports it compatible with the device.
 - Previously cached incompatible clips are repaired in place on first playback after upgrading.
 - RedGIFs API endpoints and CDN behavior are unofficial and may change.
 - Keep the original RedAlien package available for recovery. A successful ARMv7 build is not proof of successful on-device playback.
