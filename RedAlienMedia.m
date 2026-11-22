@@ -275,10 +275,9 @@ void RGSaveVideoToPhotos(NSString *videoID) {
         return;
     }
 
-    NSString *path = [[RGDir(videoID) stringByAppendingPathComponent:@"video.mp4"] copy];
+    NSString *path = [RGDir(videoID) stringByAppendingPathComponent:@"video.mp4"];
     if (!RGValidMP4(path)) {
         RGLOG(@"Photo save requested before a valid cached MP4 exists: %@", videoID);
-        [path release];
         return;
     }
 
@@ -286,7 +285,6 @@ void RGSaveVideoToPhotos(NSString *videoID) {
         if (!RGPhotoSaveBusy) RGPhotoSaveBusy = [[NSMutableSet alloc] init];
         if ([RGPhotoSaveBusy containsObject:videoID]) {
             RGLOG(@"Photo save already in progress for %@", videoID);
-            [path release];
             return;
         }
         [RGPhotoSaveBusy addObject:videoID];
@@ -305,7 +303,6 @@ void RGSaveVideoToPhotos(NSString *videoID) {
             @synchronized([NSObject class]) {
                 [RGPhotoSaveBusy removeObject:videoID];
             }
-            [path release];
         }];
 }
 
