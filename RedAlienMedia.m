@@ -271,7 +271,7 @@ static BOOL RGRunFFmpeg(NSString *input, NSString *output, NSString *log) {
 static BOOL RGRunLegacyCompatibleFFmpeg(NSString *input, NSString *output, NSString *log) {
     // Match RedAlien's legacy MPEG-4 profile for devices that cannot decode
     // the original RedGIFs stream. Keep the output modest for the iPhone 4S.
-    NSString *filter = @"fps=20,scale='if(gte(iw,ih),480,-2)':'if(gte(iw,ih),-2,480)'";
+    NSString *filter = @"fps=12,scale='if(gte(iw,ih),320,-2)':'if(gte(iw,ih),-2,320)'";
     NSString *cmd = [NSString stringWithFormat:
         @"ffmpeg -nostdin -hide_banner -loglevel warning -y -i %@ -map 0:v:0 -map 0:a? -vf %@ -sws_flags fast_bilinear -c:v mpeg4 -profile:v 0 -q:v 5 -pix_fmt yuv420p -c:a copy -tag:v mp4v -avoid_negative_ts make_zero -movflags +faststart -f mp4 %@ 2> %@",
         RGQuote(input), RGQuote(filter), RGQuote(output), RGQuote(log)];
