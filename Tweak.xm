@@ -219,6 +219,11 @@ static void RGHookPatchRequest(id self, SEL command, NSMutableURLRequest *reques
 
     NSString *videoID = RGVideoIDFromURL(request.URL);
     if (!videoID) {
+        if ([[request.URL.host lowercaseString] isEqualToString:@"v.redd.it"] &&
+            [[request.URL.path lowercaseString] hasSuffix:@"/status.js"] &&
+            [[request.URL.path lowercaseString] containsString:@"redgifs-"]) {
+            RGLog(@"RedAlien status poll observed: %@", request.URL.path);
+        }
         if (OriginalPatchRequest) OriginalPatchRequest(self, command, request);
         [pool drain];
         return;
