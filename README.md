@@ -2,7 +2,7 @@
 
 A standalone compatibility add-on for RedGIFs links opened in AlienBlue alongside RedAlien 0.0.4.
 
-> **Status:** RedGIFs playback is handed back to RedAlien's normal `vPlayer.html` interface after the MP4 is cached. The native AlienBlue **Save to Photos** action is extended to cached regular videos, RedGIFs MP4s, multi-image galleries, and direct GIF/image URLs. Solo-photo saving remains with AlienBlue's existing handler.
+> **Status:** RedGIFs playback is handed back to RedAlien's normal `vPlayer.html` interface after the MP4 is cached. The native AlienBlue **Save to Photos** action is extended to cached regular videos, RedGIFs MP4s, native Reddit galleries, album galleries, and direct GIF/image URLs. Solo-photo saving remains with AlienBlue's existing handler.
 
 ## Target environment
 
@@ -41,7 +41,7 @@ The tweak writes to `/var/mobile/Library/Logs/RedGIFsCompat.log` and `/tmp/RedGI
 
 ## Native AlienBlue Share menu
 
-The tweak targets AlienBlue's browser Share menu when a regular RedAlien video or RedGIFs cached MP4 exists, and gallery/album Share menus when image URLs can be collected from the gallery model. For album pages, it follows `BrowserViewController.optimizer` to `JMAlbumContentOptimizer_iPhone.galleryItems`, where AlienBlue stores its `JMGalleryItem` models. Videos are submitted by file path through `ALAssetsLibrary`; multi-photo galleries and GIFs are saved from their original downloaded image data. Non-media menus and AlienBlue's working single-photo save path are passed through unchanged. This integration still needs on-device testing.
+The tweak targets AlienBlue's browser Share menu when a regular RedAlien video or RedGIFs cached MP4 exists, and gallery/album Share menus when image URLs can be collected from the gallery model. For album pages, it follows `BrowserViewController.optimizer` to `JMAlbumContentOptimizer_iPhone.galleryItems`, where AlienBlue stores its `JMGalleryItem` models. Videos are submitted by file path through `ALAssetsLibrary`, with a compatibility-checked UIKit fallback if the Assets Library callback returns no asset URL; multi-photo galleries and GIFs are saved from their original downloaded image data. Non-media menus and AlienBlue's working single-photo save path are passed through unchanged. This integration still needs on-device testing.
 
 ## Upstream attribution
 
