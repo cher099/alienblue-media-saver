@@ -25,7 +25,7 @@ A standalone compatibility add-on for RedGIFs links opened in AlienBlue alongsid
 5. While processing, show RedAlien's existing loading template and status polling.
 6. Once ready, use RedAlien's existing `vPlayer.html` template and local HTTP server URL for playback.
 
-The add-on does not replace the player with a separate Save to Photos page and does not change playback or cached MP4 generation. The save action uses the iOS Assets Library API for cached MP4 files and downloaded image bytes, including original GIF data. If a RedGIFs MP4 fails both native video-save APIs, the add-on makes a separate AVFoundation export for Camera Roll compatibility and retries that exported copy. The original cached playback MP4 remains untouched. Existing solo-image saving is passed through to AlienBlue.
+The add-on does not replace the player with a separate Save to Photos page and does not change playback or cached MP4 generation. The save action uses the iOS Assets Library API for cached MP4 files and downloaded image bytes, including original GIF data. If Assets Library cannot confirm a RedGIFs save with an asset URL, the add-on makes a separate AVFoundation export for Camera Roll compatibility and retries that exported copy. This avoids treating iOS 6's nil-error callback as proof that the original file was saved. The original cached playback MP4 remains untouched. Existing solo-image saving is passed through to AlienBlue.
 
 ## Diagnostics
 
@@ -42,7 +42,7 @@ The tweak writes to `/var/mobile/Library/Logs/RedGIFsCompat.log` and `/tmp/RedGI
 
 ## Native AlienBlue Share menu
 
-The tweak targets AlienBlue's browser Share menu when a regular RedAlien video or RedGIFs cached MP4 exists, and gallery/album Share menus when image URLs can be collected from the gallery model or the browser's Reddit post model. It reads native Reddit gallery payloads from `gallery_data` + `media_metadata`, falls back to legacy `preview.images`, and follows `BrowserViewController.optimizer` to `JMAlbumContentOptimizer_iPhone.galleryItems` for album pages. Videos are submitted by file path through `ALAssetsLibrary`, then UIKit. If both fail for a RedGIFs item, AVFoundation exports a separate 640x480/medium-quality Camera Roll copy and retries the save. Multi-photo galleries and GIFs are saved from their original downloaded image data. Non-media menus and AlienBlue's working single-photo save path are passed through unchanged. This integration still needs on-device testing.
+The tweak targets AlienBlue's browser Share menu when a regular RedAlien video or RedGIFs cached MP4 exists, and gallery/album Share menus when image URLs can be collected from the gallery model or the browser's Reddit post model. It reads native Reddit gallery payloads from `gallery_data` + `media_metadata`, falls back to legacy `preview.images`, and follows `BrowserViewController.optimizer` to `JMAlbumContentOptimizer_iPhone.galleryItems` for album pages. Regular videos are submitted by file path through `ALAssetsLibrary`, preserving the known-good iOS 6 flow. For RedGIFs, a nil Assets Library asset URL triggers a separate 640x480/medium-quality AVFoundation Camera Roll export directly; the tweak does not rely on UIKit's false-positive nil-error callback for the original cached MP4. Multi-photo galleries and GIFs are saved from their original downloaded image data. Non-media menus and AlienBlue's working single-photo save path are passed through unchanged. This integration still needs on-device testing.
 
 ## Upstream attribution
 
