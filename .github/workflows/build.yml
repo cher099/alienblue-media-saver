@@ -2,6 +2,8 @@ name: Build iOS tweak
 
 on:
   push:
+    branches: [ main, feature/redalien-ffmpeg-playback, fix/save-to-photos-all-media ]
+  pull_request:
     branches: [ main ]
   workflow_dispatch:
 
