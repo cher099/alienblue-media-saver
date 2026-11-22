@@ -484,6 +484,46 @@ static NSDictionary *RGGallerySaveContext(id galleryController) {
             NSStringFromClass([galleryController class]), @"source", nil];
 }
 
+static NSDictionary *RGGallerySaveContextFromOwner(id owner) {
+    if (!owner) return nil;
+
+    if (RGLooksLikeGalleryController(owner)) {
+        NSDictionary *directContext = RGGallerySaveContext(owner);
+        if (directContext) return directContext;
+    }
+
+    // AlienBlue's BrowserViewController inherits JMOptimalBrowserController,
+    // which owns the active JMContentOptimizer through its "optimizer" property.
+    // Album pages store their JMGalleryItem objects on
+    // JMAlbumContentOptimizer_iPhone.galleryItems, not on the browser controller.
+    id optimizer = RGObjectForSelector(owner, @"optimizer");
+
+    // Keep a guarded fallback for builds where the optimizer is exposed by the
+    // content coordinator rather than directly by the owner.
+    if (!optimizer) {
+        id contentCoordinator = RGObjectForSelector(owner, @"contentCoordinator");
+        optimizer = RGObjectForSelector(contentCoordinator, @"optimizer");
+    }
+    if (!optimizer) {
+        optimizer = RGObjectForSelector(owner, @"contentOptimizer");
+    }
+
+    if (optimizer) {
+        RGLog(@"Checking gallery owner %@ through optimizer %@",
+              NSStringFromClass([owner class]), NSStringFromClass([optimizer class]));
+        if (RGLooksLikeGalleryController(optimizer)) {
+            NSDictionary *optimizerContext = RGGallerySaveContext(optimizer);
+            if (optimizerContext) {
+                RGLog(@"Resolved multi-photo gallery through %@ -> %@",
+                      NSStringFromClass([owner class]), NSStringFromClass([optimizer class]));
+                return optimizerContext;
+            }
+        }
+    }
+
+    return nil;
+}
+
 static BOOL RGIsShareActionSheet(NSArray *titles) {
     NSArray *shareMarkers = [NSArray arrayWithObjects:
         @"Open in Safari", @"Save to Reddit", @"Send To ...", @"Copy Link",
@@ -510,23 +550,24 @@ static NSDictionary *RGSaveContextForSheet(id delegate, id view, NSArray *titles
 
     if (!RGIsShareActionSheet(titles)) return nil;
 
-    if (RGLooksLikeGalleryController(viewController)) {
-        NSDictionary *context = RGGallerySaveContext(viewController);
-        if (context) return context;
-    }
-    if (delegate != viewController && RGLooksLikeGalleryController(delegate)) {
-        NSDictionary *context = RGGallerySaveContext(delegate);
-        if (context) return context;
+    // Check the visible controller and action-sheet delegate first. For
+    // album pages these are often BrowserViewController instances; the
+    // gallery items live on their JMAlbumContentOptimizer_iPhone optimizer.
+    NSDictionary *galleryContext = RGGallerySaveContextFromOwner(viewController);
+    if (galleryContext) return galleryContext;
+
+    if (delegate != viewController) {
+        galleryContext = RGGallerySaveContextFromOwner(delegate);
+        if (galleryContext) return galleryContext;
     }
 
-    // Some album optimizers present the share sheet from a BrowserViewController;
-    // inspect the responder/controller parent chain without traversing arbitrary app objects.
+    // Some gallery/album controllers are directly present in the responder chain.
+    // Use the same guarded owner lookup so embedded optimizers are also discovered.
     id responder = view;
     for (NSUInteger depth = 0; responder && depth < 40; depth++) {
-        if (RGLooksLikeGalleryController(responder)) {
-            NSDictionary *context = RGGallerySaveContext(responder);
-            if (context) return context;
-        }
+        galleryContext = RGGallerySaveContextFromOwner(responder);
+        if (galleryContext) return galleryContext;
+
         if (![responder respondsToSelector:@selector(nextResponder)]) break;
         responder = ((id (*)(id, SEL))objc_msgSend)(responder, @selector(nextResponder));
     }
