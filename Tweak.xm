@@ -21,6 +21,9 @@ static BOOL RGSaveHookInstalled = NO;
 static IMP OriginalUIWebViewSetDelegate = NULL;
 static NSMutableDictionary *RGWebViewDelegateOriginals = nil;
 static BOOL RGWebViewHookInstalled = NO;
+static IMP OriginalUIActionSheetShowInView = NULL;
+static BOOL RGActionSheetHookInstalled = NO;
+
 
 #import <stdarg.h>
 
@@ -288,8 +291,48 @@ static void RGInstallWebViewHook(void) {
     }
 }
 
+
+static void RGHookActionSheetShowInView(id self, SEL command, id view) {
+    NSUInteger count = 0;
+    SEL countSelector = NSSelectorFromString(@"numberOfButtons");
+    SEL titleSelector = NSSelectorFromString(@"buttonTitleAtIndex:");
+    if ([self respondsToSelector:countSelector] && [self respondsToSelector:titleSelector]) {
+        count = ((NSUInteger (*)(id, SEL))objc_msgSend)(self, countSelector);
+        NSMutableArray *titles = [NSMutableArray arrayWithCapacity:count];
+        for (NSUInteger i = 0; i < count; i++) {
+            NSString *title = ((id (*)(id, SEL, NSUInteger))objc_msgSend)(self, titleSelector, i);
+            [titles addObject:title ? title : @"(nil)"];
+        }
+        id delegate = [self respondsToSelector:@selector(delegate)] ?
+            ((id (*)(id, SEL))objc_msgSend)(self, @selector(delegate)) : nil;
+        RGLog(@"UIActionSheet presented class=%@ delegate=%@ buttons=%@ cancelIndex=%ld",
+              NSStringFromClass([self class]),
+              delegate ? NSStringFromClass([delegate class]) : @"(nil)",
+              titles,
+              (long)([self respondsToSelector:NSSelectorFromString(@"cancelButtonIndex")] ?
+                  ((NSInteger (*)(id, SEL))objc_msgSend)(self, NSSelectorFromString(@"cancelButtonIndex")) : -1));
+    }
+    if (OriginalUIActionSheetShowInView) {
+        ((void (*)(id, SEL, id))OriginalUIActionSheetShowInView)(self, command, view);
+    }
+}
+
+static void RGInstallActionSheetProbe(void) {
+    if (RGActionSheetHookInstalled) return;
+    Class sheetClass = NSClassFromString(@"UIActionSheet");
+    Method method = sheetClass ? class_getInstanceMethod(sheetClass, @selector(showInView:)) : NULL;
+    if (!method) return;
+    MSHookMessageEx(sheetClass, @selector(showInView:),
+                    (IMP)RGHookActionSheetShowInView, &OriginalUIActionSheetShowInView);
+    if (OriginalUIActionSheetShowInView) {
+        RGActionSheetHookInstalled = YES;
+        RGLog(@"Installed UIActionSheet share-menu discovery probe");
+    }
+}
+
 static void RGInstallSaveHook(void) {
     RGInstallWebViewHook();
+    RGInstallActionSheetProbe();
     if (RGSaveHookInstalled) return;
     Class appClass = NSClassFromString(@"UIApplication");
     Method method = appClass ? class_getInstanceMethod(appClass, @selector(openURL:)) : NULL;
@@ -391,6 +434,7 @@ static void RGImageAdded(const struct mach_header *header, intptr_t slide) {
         NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
         RGInstallSaveHook();
         RGInstallWebViewHook();
+        RGInstallActionSheetProbe();
         RGInstallHooks();
         [pool drain];
     });
@@ -407,6 +451,7 @@ static void RGImageAdded(const struct mach_header *header, intptr_t slide) {
 
     RGInstallSaveHook();
     RGInstallWebViewHook();
+    RGInstallActionSheetProbe();
     RGInstallHooks();
     _dyld_register_func_for_add_image(RGImageAdded);
     [pool drain];
