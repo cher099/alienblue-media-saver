@@ -1,5 +1,6 @@
 #import "RedAlienMedia.h"
 #import <UIKit/UIKit.h>
+#import <dispatch/dispatch.h>
 #import <objc/message.h>
 #import <pthread.h>
 #import <sys/wait.h>
@@ -163,6 +164,19 @@ static BOOL RGValidMP4(NSString *path) {
     const unsigned char *b = [data bytes];
     return b[4] == 'f' && b[5] == 't' && b[6] == 'y' && b[7] == 'p';
 }
+
+static BOOL RGVideoIsCompatibleForDevice(NSString *path) {
+    if (!path.length) return NO;
+    if ([NSThread isMainThread]) {
+        return UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(path);
+    }
+
+    __block BOOL compatible = NO;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        compatible = UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(path);
+    });
+    return compatible;
+}
 static void RGStatus(NSString *dir, NSInteger progress, NSString *message, BOOL error) {
     NSDictionary *value = [NSDictionary dictionaryWithObjectsAndKeys:
         [NSNumber numberWithInteger:progress], @"progress", message ?: @"Working...", @"text",
@@ -221,21 +235,17 @@ static BOOL RGDownload(NSString *urlString, NSString *path, NSString *userAgent,
     if (!ok) [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
     return ok;
 }
-static BOOL RGRunFFmpeg(NSString *input, NSString *output, NSString *log) {
-    // RedAlien already depends on the FFmpeg package and invokes its "ffmpeg" executable.
-    NSString *cmd = [NSString stringWithFormat:
-        @"ffmpeg -nostdin -hide_banner -loglevel warning -y -i %@ -c copy -movflags +faststart -f mp4 %@ 2> %@",
-        RGQuote(input), RGQuote(output), RGQuote(log)];
+static BOOL RGRunFFmpegCommand(NSString *cmd, NSString *log, NSString *mode) {
     const char *command = [cmd UTF8String];
-    if (!command) { RGLOG(@"FFmpeg command could not be encoded"); return NO; }
-    RGLOG(@"Starting FFmpeg input=%@ output=%@ log=%@", input, output, log);
+    if (!command) { RGLOG(@"FFmpeg command could not be encoded for mode=%@", mode); return NO; }
+    RGLOG(@"Starting FFmpeg mode=%@ log=%@", mode, log);
     pid_t pid = fork();
     if (pid == 0) {
         int fd = open("/dev/null", O_WRONLY);
         if (fd >= 0) { dup2(fd, STDOUT_FILENO); close(fd); }
         execl("/bin/sh", "sh", "-c", command, (char *)NULL); _exit(127);
     }
-    if (pid < 0) { RGLOG(@"FFmpeg fork failed: errno=%d", errno); return NO; }
+    if (pid < 0) { RGLOG(@"FFmpeg fork failed for mode=%@: errno=%d", mode, errno); return NO; }
     int status = 0; pid_t result;
     do { result = waitpid(pid, &status, 0); } while (result < 0 && errno == EINTR);
     BOOL exited = result == pid && WIFEXITED(status);
@@ -243,8 +253,70 @@ static BOOL RGRunFFmpeg(NSString *input, NSString *output, NSString *log) {
     BOOL ok = exited && exitCode == 0;
     NSString *fflog = [NSString stringWithContentsOfFile:log encoding:NSUTF8StringEncoding error:nil];
     if (!ok && fflog.length > 3000) fflog = [fflog substringFromIndex:fflog.length - 3000];
-    RGLOG(@"FFmpeg finished result=%@ exit=%d waitResult=%d log=%@", ok ? @"success" : @"failure", exitCode, (int)result, fflog ?: @"(no ffmpeg log)");
+    RGLOG(@"FFmpeg mode=%@ finished result=%@ exit=%d waitResult=%d log=%@",
+          mode, ok ? @"success" : @"failure", exitCode, (int)result,
+          fflog ?: @"(no ffmpeg log)");
     return ok;
+}
+
+static BOOL RGRunFFmpeg(NSString *input, NSString *output, NSString *log) {
+    // Start with a fast stream-copy remux. This preserves quality but does not
+    // change the source codec, profile, pixel format, or audio format.
+    NSString *cmd = [NSString stringWithFormat:
+        @"ffmpeg -nostdin -hide_banner -loglevel warning -y -i %@ -c copy -movflags +faststart -f mp4 %@ 2> %@",
+        RGQuote(input), RGQuote(output), RGQuote(log)];
+    return RGRunFFmpegCommand(cmd, log, @"stream-copy remux");
+}
+
+static BOOL RGRunLegacyCompatibleFFmpeg(NSString *input, NSString *output, NSString *log) {
+    // Match RedAlien's legacy MPEG-4 profile for devices that cannot decode
+    // the original RedGIFs stream. Keep the output modest for the iPhone 4S.
+    NSString *filter = @"fps=20,scale='if(gte(iw,ih),480,-2)':'if(gte(iw,ih),-2,480)'";
+    NSString *cmd = [NSString stringWithFormat:
+        @"ffmpeg -nostdin -hide_banner -loglevel warning -y -i %@ -map 0:v:0 -map 0:a? -vf %@ -sws_flags fast_bilinear -c:v mpeg4 -profile:v 0 -q:v 5 -pix_fmt yuv420p -c:a copy -tag:v mp4v -avoid_negative_ts make_zero -movflags +faststart -f mp4 %@ 2> %@",
+        RGQuote(input), RGQuote(filter), RGQuote(output), RGQuote(log)];
+    return RGRunFFmpegCommand(cmd, log, @"legacy MPEG-4 compatibility transcode");
+}
+
+static BOOL RGMakeCompatibleMP4(NSString *input, NSString *output, NSString *log, NSString *videoID) {
+    NSString *legacyOutput = [[[output stringByDeletingPathExtension]
+                               stringByAppendingString:@"-legacy"] stringByAppendingPathExtension:@"mp4"];
+    NSString *legacyLog = [[[log stringByDeletingPathExtension]
+                            stringByAppendingString:@"-legacy"] stringByAppendingPathExtension:@"log"];
+    [[NSFileManager defaultManager] removeItemAtPath:output error:nil];
+    [[NSFileManager defaultManager] removeItemAtPath:legacyOutput error:nil];
+
+    BOOL remuxed = RGRunFFmpeg(input, output, log) && RGValidMP4(output);
+    if (remuxed && RGVideoIsCompatibleForDevice(output)) {
+        RGLOG(@"Stream-copy MP4 is compatible with iOS playback and Photos for %@", videoID);
+        return YES;
+    }
+
+    if (remuxed) {
+        RGLOG(@"Stream-copy MP4 for %@ is not compatible with iOS; trying legacy MPEG-4 transcode", videoID);
+    } else {
+        RGLOG(@"Stream-copy remux failed for %@; trying legacy MPEG-4 transcode", videoID);
+    }
+    [[NSFileManager defaultManager] removeItemAtPath:output error:nil];
+
+    BOOL transcoded = RGRunLegacyCompatibleFFmpeg(input, legacyOutput, legacyLog) &&
+                      RGValidMP4(legacyOutput);
+    if (transcoded && RGVideoIsCompatibleForDevice(legacyOutput)) {
+        NSError *moveError = nil;
+        if ([[NSFileManager defaultManager] moveItemAtPath:legacyOutput toPath:output error:&moveError]) {
+            RGLOG(@"Legacy MPEG-4 output is compatible with iOS playback and Photos for %@", videoID);
+            return YES;
+        }
+        RGLOG(@"Could not install legacy MPEG-4 output for %@: %@", videoID, moveError);
+    } else if (transcoded) {
+        RGLOG(@"Legacy MPEG-4 output for %@ is still not compatible with this iOS device", videoID);
+    } else {
+        RGLOG(@"Legacy MPEG-4 transcode failed for %@; see %@", videoID, legacyLog);
+    }
+
+    [[NSFileManager defaultManager] removeItemAtPath:output error:nil];
+    [[NSFileManager defaultManager] removeItemAtPath:legacyOutput error:nil];
+    return NO;
 }
 static NSString *RGTemplate(NSString *name) {
     return [NSString stringWithContentsOfFile:[RASupport stringByAppendingPathComponent:name]
@@ -275,7 +347,7 @@ void RGSaveVideoToPhotos(NSString *videoID) {
     // UIKit's legacy save API accepts a filesystem path directly and reports
     // completion through a selector, which is suitable for this iOS 6 target.
     NSString *photosPath = [cachePath stringByResolvingSymlinksInPath];
-    BOOL compatible = UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(photosPath);
+    BOOL compatible = RGVideoIsCompatibleForDevice(photosPath);
     if (!compatible) {
         RGLOG(@"UIKit reports video is not compatible with the Saved Photos album: %@ path=%@",
               videoID, photosPath);
@@ -327,7 +399,7 @@ static void *RGWorker(void *arg) {
         RGLOG(@"Downloaded source path=%@ size=%llu", source, [[sourceAttributes objectForKey:NSFileSize] unsignedLongLongValue]);
         RGStatus(dir, 35, @"Preparing video with RedAlien FFmpeg...", NO);
         [[NSFileManager defaultManager] removeItemAtPath:temp error:nil];
-        ok = RGRunFFmpeg(source, temp, log) && RGValidMP4(temp);
+        ok = RGMakeCompatibleMP4(source, temp, log, videoID);
         if (ok) {
             [[NSFileManager defaultManager] removeItemAtPath:final error:nil];
             NSError *moveError = nil;
@@ -351,12 +423,90 @@ static void *RGWorker(void *arg) {
     [info release]; [pool drain]; return NULL;
 }
 
+static void *RGCachedRepairWorker(void *arg) {
+    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+    NSDictionary *info = (NSDictionary *)arg;
+    NSString *videoID = [info objectForKey:@"id"];
+    NSString *videoPath = [info objectForKey:@"path"];
+    NSString *dir = RGDir(videoID);
+    NSString *temp = [dir stringByAppendingPathComponent:@"video-legacy-temp.mp4"];
+    NSString *log = [dir stringByAppendingPathComponent:@"ffmpeg-repair.log"];
+    NSString *backup = [dir stringByAppendingPathComponent:@"video-original.mp4"];
+
+    RGLOG(@"Repairing cached RedGIFs video for iOS compatibility: %@", videoID);
+    RGStatus(dir, 35, @"Converting cached video for this iPhone...", NO);
+    [[NSFileManager defaultManager] removeItemAtPath:temp error:nil];
+    [[NSFileManager defaultManager] removeItemAtPath:backup error:nil];
+
+    BOOL ok = RGRunLegacyCompatibleFFmpeg(videoPath, temp, log) &&
+              RGValidMP4(temp) &&
+              RGVideoIsCompatibleForDevice(temp);
+    if (ok) {
+        NSError *backupError = nil;
+        if ([[NSFileManager defaultManager] moveItemAtPath:videoPath toPath:backup error:&backupError]) {
+            NSError *installError = nil;
+            if ([[NSFileManager defaultManager] moveItemAtPath:temp toPath:videoPath error:&installError]) {
+                [[NSFileManager defaultManager] removeItemAtPath:backup error:nil];
+                RGStatus(dir, 100, @"Done!", NO);
+                RGLOG(@"Repaired cached RedGIFs video for iOS compatibility: %@", videoID);
+            } else {
+                NSError *restoreError = nil;
+                [[NSFileManager defaultManager] moveItemAtPath:backup toPath:videoPath error:&restoreError];
+                RGLOG(@"Could not replace cached video %@: %@; restore=%@", videoID, installError, restoreError);
+                ok = NO;
+            }
+        } else {
+            RGLOG(@"Could not back up cached video %@ before repair: %@", videoID, backupError);
+            ok = NO;
+        }
+    }
+
+    if (!ok) {
+        [[NSFileManager defaultManager] removeItemAtPath:temp error:nil];
+        RGStatus(dir, 0, @"This cached clip could not be converted for iOS 6. Check ffmpeg-repair.log.", YES);
+        RGLOG(@"Cached video compatibility repair failed for %@; see %@", videoID, log);
+    }
+
+    @synchronized([NSObject class]) { [RGBusy removeObject:videoID]; }
+    [info release];
+    [pool drain];
+    return NULL;
+}
+
+static BOOL RGQueueCachedRepair(NSString *videoID, NSString *videoPath) {
+    @synchronized([NSObject class]) {
+        if (!RGBusy) RGBusy = [[NSMutableSet alloc] init];
+        if ([RGBusy containsObject:videoID]) return YES;
+        [RGBusy addObject:videoID];
+    }
+
+    NSDictionary *info = [[NSDictionary alloc] initWithObjectsAndKeys:
+                          videoID, @"id", videoPath, @"path", nil];
+    pthread_t thread;
+    int result = pthread_create(&thread, NULL, RGCachedRepairWorker, info);
+    if (result == 0) {
+        pthread_detach(thread);
+        return YES;
+    }
+
+    [info release];
+    @synchronized([NSObject class]) { [RGBusy removeObject:videoID]; }
+    RGStatus(RGDir(videoID), 0, @"Could not start video compatibility repair.", YES);
+    RGLOG(@"Cached video repair thread failed for %@: %d", videoID, result);
+    return NO;
+}
+
 NSString *RGPlaybackHTMLForVideo(NSString *videoID, NSString *mediaURL, NSString *userAgent) {
     if (!videoID.length) return nil;
     NSString *dir = RGDir(videoID);
     if (!dir) return nil;
     NSString *video = [dir stringByAppendingPathComponent:@"video.mp4"];
     if (RGValidMP4(video)) {
+        if (!RGVideoIsCompatibleForDevice(video)) {
+            RGLOG(@"Cached MP4 for %@ is not compatible with this iOS device; queueing a legacy repair", videoID);
+            RGQueueCachedRepair(videoID, video);
+            return RGLoadingHTML(videoID);
+        }
         RGLOG(@"Cached video found id=%@ path=%@", videoID, video);
         Class serverClass = NSClassFromString(@"HTTPServer");
         SEL portSelector = NSSelectorFromString(@"currentPort");
