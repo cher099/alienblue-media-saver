@@ -7,6 +7,7 @@
 #import <errno.h>
 #import <stdarg.h>
 #import <sys/socket.h>
+#import <sys/time.h>
 #import <netinet/in.h>
 #import <arpa/inet.h>
 #import <string.h>
