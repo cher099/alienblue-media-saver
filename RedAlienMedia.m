@@ -295,7 +295,7 @@ static void RGShowPhotoSaveProgress(NSString *message, NSUInteger total) {
             RGPhotoSaveHUDLabel.backgroundColor = [UIColor clearColor];
             RGPhotoSaveHUDLabel.textColor = [UIColor whiteColor];
             RGPhotoSaveHUDLabel.font = [UIFont systemFontOfSize:14.0];
-            RGPhotoSaveHUDLabel.textAlignment = UITextAlignmentCenter;
+            RGPhotoSaveHUDLabel.textAlignment = NSTextAlignmentCenter;
             RGPhotoSaveHUDLabel.numberOfLines = 2;
             [RGPhotoSaveHUD addSubview:RGPhotoSaveHUDLabel];
             [RGPhotoSaveHUDLabel release];
