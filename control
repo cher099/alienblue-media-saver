@@ -1,8 +1,8 @@
 Package: dev.cherwin.redalien.redgifs
 Name: RedAlien RedGIFs Compatibility
-Version: 0.2.2
+Version: 0.2.3
 Architecture: iphoneos-arm
-Description: RedGIFs compatibility add-on using RedAlien's FFmpeg pipeline, with an optional Save to Photos action.
+Description: RedGIFs compatibility add-on that downloads videos and lets users save them to Photos.
 Maintainer: cher099
 Author: cher099
 Section: Tweaks
