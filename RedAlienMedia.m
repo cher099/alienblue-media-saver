@@ -315,30 +315,14 @@ void RGSaveVideoToPhotos(NSString *videoID) {
         });
 }
 
-static NSString *RGPlayerHTML(NSString *path, NSString *videoID) {
-    NSString *html = RGTemplate(@"vPlayer.html");
-    if (!html) { RGLOG(@"RedAlien vPlayer.html template missing at %@", [RASupport stringByAppendingPathComponent:@"vPlayer.html"]); return nil; }
-    NSString *localPath = [path stringByReplacingOccurrencesOfString:@"/private" withString:@""];
-    NSInteger port = 8080;
-    Class server = NSClassFromString(@"HTTPServer");
-    SEL selector = NSSelectorFromString(@"currentPort");
-    if (server && [server respondsToSelector:selector])
-        port = ((NSInteger (*)(id, SEL))objc_msgSend)(server, selector);
-    NSString *url = [NSString stringWithFormat:@"http://127.0.0.1:%ld%@", (long)port, localPath];
-    RGLOG(@"Player template loaded; serverPort=%ld file=%@ url=%@", (long)port, path, url);
-    BOOL served = RGProbeLocalFileServer(port, localPath);
-    RGLOG(@"Local MP4 HTTP probe=%@", served ? @"PASS" : @"FAIL");
-    html = [html stringByReplacingOccurrencesOfString:@"{{VIDEO_URL}}" withString:url];
+static NSString *RGSaveHTML(NSString *path, NSString *videoID) {
+    if (!RGValidMP4(path)) return nil;
     NSString *saveButton = [NSString stringWithFormat:
-        @"<button id=\"rg-save-photo\" style=\"position:absolute;z-index:9999;top:12px;right:12px;padding:9px 12px;background:#222;border:1px solid #aaa;border-radius:5px;color:#fff;font:14px Helvetica,Arial,sans-serif;\" onclick=\"this.innerHTML='Saving...';window.location.href='redgifscompat://save/%@';return false;\">Save to Photos</button>",
+        @"<button id=\\"rg-save-photo\\" style=\\"padding:14px 20px;background:#1877d2;border:0;border-radius:7px;color:#fff;font:bold 16px Helvetica,Arial,sans-serif;\\" onclick=\\"this.innerHTML='Saving to Photos...';window.location.href='redgifscompat://save/%@';return false;\\">Save to Photos</button>",
         videoID];
-    NSRange bodyEnd = [html rangeOfString:@"</body>" options:NSCaseInsensitiveSearch];
-    if (bodyEnd.location != NSNotFound) {
-        html = [html stringByReplacingCharactersInRange:bodyEnd withString:[saveButton stringByAppendingString:@"</body>"]];
-    } else {
-        html = [html stringByAppendingString:saveButton];
-    }
-    return html;
+    return [NSString stringWithFormat:
+        @"<!doctype html><html><head><meta name=\\"viewport\\" content=\\"width=device-width,initial-scale=1\\"></head><body style=\\"margin:0;padding:28px 16px;background:#111;color:#fff;font:16px Helvetica,Arial,sans-serif;text-align:center;\\"><p style=\\"margin:8px 0 22px;\\">RedGIFs video is ready.</p>%@<p style=\\"margin-top:18px;color:#aaa;font-size:12px;\\">The video will be saved to your Camera Roll.</p></body></html>",
+        saveButton];
 }
 static void *RGWorker(void *arg) {
     NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
@@ -394,7 +378,7 @@ NSString *RGPlaybackHTMLForVideo(NSString *videoID, NSString *mediaURL, NSString
     NSString *dir = RGDir(videoID);
     if (!dir) return nil;
     NSString *video = [dir stringByAppendingPathComponent:@"video.mp4"];
-    if (RGValidMP4(video)) { RGLOG(@"Cached video found id=%@ path=%@", videoID, video); return RGPlayerHTML(video, videoID); }
+    if (RGValidMP4(video)) { RGLOG(@"Cached video found id=%@ path=%@", videoID, video); return RGSaveHTML(video, videoID); }
     @synchronized([NSObject class]) {
         if (!RGBusy) RGBusy = [[NSMutableSet alloc] init];
         if ([RGBusy containsObject:videoID]) { RGLOG(@"Video %@ already processing; returning loading HTML", videoID); return RGLoadingHTML(videoID); }
