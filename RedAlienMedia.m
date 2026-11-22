@@ -233,38 +233,6 @@ static NSString *RGLoadingHTML(NSString *videoID) {
     return html ? [html stringByReplacingOccurrencesOfString:@"{{STATUS_URL}}" withString:statusURL]
                 : @"<html><body>Preparing RedGIFs video...</body></html>";
 }
-static BOOL RGProbeLocalFileServer(NSInteger port, NSString *path) {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) { RGLOG(@"Local server probe socket failed errno=%d", errno); return NO; }
-    struct timeval timeout;
-    timeout.tv_sec = 2;
-    timeout.tv_usec = 0;
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    struct sockaddr_in address;
-    memset(&address, 0, sizeof(address));
-    address.sin_family = AF_INET;
-    address.sin_port = htons((uint16_t)port);
-    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    if (connect(fd, (struct sockaddr *)&address, sizeof(address)) != 0) {
-        RGLOG(@"Local HTTP server unavailable at 127.0.0.1:%ld errno=%d", (long)port, errno);
-        close(fd);
-        return NO;
-    }
-    NSString *request = [NSString stringWithFormat:@"GET %@ HTTP/1.0\r\nRange: bytes=0-15\r\n\r\n", path];
-    send(fd, [request UTF8String], strlen([request UTF8String]), 0);
-    char response[1024] = {0};
-    ssize_t received = recv(fd, response, sizeof(response) - 1, 0);
-    close(fd);
-    if (received > 0) {
-        response[received] = 0;
-        char *end = strchr(response, '\n');
-        if (end) *end = 0;
-        RGLOG(@"Local HTTP probe response: %s", response);
-        return strstr(response, "200") != NULL || strstr(response, "206") != NULL;
-    }
-    RGLOG(@"Local HTTP server accepted connection but returned no response");
-    return NO;
-}
 
 void RGSaveVideoToPhotos(NSString *videoID) {
     if (!videoID.length) return;
