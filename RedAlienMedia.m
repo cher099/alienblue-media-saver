@@ -318,10 +318,10 @@ void RGSaveVideoToPhotos(NSString *videoID) {
 static NSString *RGSaveHTML(NSString *path, NSString *videoID) {
     if (!RGValidMP4(path)) return nil;
     NSString *saveButton = [NSString stringWithFormat:
-        @"<button id=\\"rg-save-photo\\" style=\\"padding:14px 20px;background:#1877d2;border:0;border-radius:7px;color:#fff;font:bold 16px Helvetica,Arial,sans-serif;\\" onclick=\\"this.innerHTML='Saving to Photos...';window.location.href='redgifscompat://save/%@';return false;\\">Save to Photos</button>",
+        @"<button id='rg-save-photo' style='padding:14px 20px;background:#1877d2;border:0;border-radius:7px;color:#fff;font:bold 16px Helvetica,Arial,sans-serif;' onclick='this.innerHTML=\"Saving to Photos...\";window.location.href=\"redgifscompat://save/%@\";return false;'>Save to Photos</button>",
         videoID];
     return [NSString stringWithFormat:
-        @"<!doctype html><html><head><meta name=\\"viewport\\" content=\\"width=device-width,initial-scale=1\\"></head><body style=\\"margin:0;padding:28px 16px;background:#111;color:#fff;font:16px Helvetica,Arial,sans-serif;text-align:center;\\"><p style=\\"margin:8px 0 22px;\\">RedGIFs video is ready.</p>%@<p style=\\"margin-top:18px;color:#aaa;font-size:12px;\\">The video will be saved to your Camera Roll.</p></body></html>",
+        @"<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'></head><body style='margin:0;padding:28px 16px;background:#111;color:#fff;font:16px Helvetica,Arial,sans-serif;text-align:center;'><p style='margin:8px 0 22px;'>RedGIFs video is ready.</p>%@<p style='margin-top:18px;color:#aaa;font-size:12px;'>The video will be saved to your Camera Roll.</p></body></html>",
         saveButton];
 }
 static void *RGWorker(void *arg) {
