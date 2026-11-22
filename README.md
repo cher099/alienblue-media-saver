@@ -2,7 +2,7 @@
 
 A standalone compatibility add-on for RedGIFs links opened in AlienBlue alongside RedAlien 0.0.4.
 
- > **Status: Save to Photos-focused build 0.2.3.** Inline playback is intentionally out of scope. The add-on resolves and downloads RedGIFs videos, then presents a simple Save to Photos action. The save tap is intercepted through the embedded UIWebView navigation delegate.
+ > **Status: Native share-menu integration in progress.** The current build still provides a temporary Save to Photos page. A diagnostic hook now records native `UIActionSheet` button titles and delegate classes so the next change can target AlienBlue's actual Share menu without guessing.
 
 ## Target environment
 
@@ -24,8 +24,9 @@ The add-on keeps its own package identifier and does not overwrite RedAlien file
 2. Resolve the RedGIFs MP4 URL using the RedGIFs API.
 3. Download the MP4 to `/var/tmp/redalien/redgifs-<id>/source.mp4`.
 4. Use the installed RedAlien FFmpeg executable to prepare a local MP4 in the same cache directory.
-5. Display a lightweight **Save to Photos** page; no inline video player is used.
-6. Intercept the button's custom URL at the `UIWebView` navigation-delegate level and call iOS 6's Assets Library API to save the cached MP4 to Camera Roll.
+5. Until the native menu integration is verified, display a temporary **Save to Photos** page; no inline video player is used.
+6. The temporary button is intercepted at the `UIWebView` navigation-delegate level and calls iOS 6's Assets Library API to save the cached MP4 to Camera Roll.
+7. A `UIActionSheet` discovery probe logs the menu's button titles, delegate class, and cancel-button index. This is diagnostic only; it does not yet add a menu item.
 
 Saving is user-initiated. The add-on does not automatically add videos to Photos. The `redgifs-` cache prefix keeps files separate from ordinary Reddit video IDs.
 
@@ -66,8 +67,10 @@ RedAlien is a separate upstream project: https://github.com/spytaspund/redalien
 This repository is an independent compatibility add-on, not an official RedAlien or RedGIFs release. The add-on reuses RedAlien's installed runtime dependency and installed HTML templates without copying or modifying its source files. Preserve upstream copyright and license notices if source files are ever copied into this repository.
 
 
-## Save to Photos (0.2.3)
+## Native AlienBlue Share menu investigation
 
-The page shows a single **Save to Photos** button after the MP4 is ready. Its custom URL is intercepted by the UIWebView delegate, rather than relying on UIApplication's `openURL:` path. The save operation uses `ALAssetsLibrary` and logs completion or errors to `/var/mobile/Library/Logs/RedGIFsCompat.log` and `/tmp/RedGIFsCompat.log`.
+The intended UX is to add **Save to Photos** alongside AlienBlue's existing **Open to Safari**, **Send To...**, and **Save to Reddit** actions. The current diagnostic build logs every `UIActionSheet` presented through `showInView:` including its button titles, delegate class, and cancel-button index. Check `/var/mobile/Library/Logs/RedGIFsCompat.log` (or `/tmp/RedGIFsCompat.log`) after opening a RedGIFs post and tapping Share. These runtime details will confirm whether this is the correct menu and which delegate callback should handle the new action.
 
-Inline playback is intentionally not supported in this release.
+The actual menu insertion is deliberately not enabled yet: we should only inject into the matching AlienBlue share sheet, not unrelated action sheets throughout the app. Once the log identifies the exact menu, the next change can add the native item and route its tap to the existing `ALAssetsLibrary` save routine.
+
+The temporary Save to Photos page remains as a fallback while native menu integration is being verified. Inline playback is intentionally not supported.
