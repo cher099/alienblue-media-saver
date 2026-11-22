@@ -9,6 +9,7 @@
 #import <sys/socket.h>
 #import <netinet/in.h>
 #import <arpa/inet.h>
+#import <string.h>
 
 static NSString * const RGRoot = @"/var/tmp/redalien";
 static NSString * const RASupport = @"/Library/Application Support/RedAlien";
@@ -33,7 +34,7 @@ static void RGMediaLog(NSString *format, ...) {
     va_start(args, format);
     NSString *message = [[[NSString alloc] initWithFormat:format arguments:args] autorelease];
     va_end(args);
-    NSString *line = [NSString stringWithFormat:@"%@ [Media] %@\\n", [NSDate date], message];
+    NSString *line = [NSString stringWithFormat:@"%@ [Media] %@\n", [NSDate date], message];
     NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
     @synchronized([NSString class]) {
         NSString *directory = @"/var/mobile/Library/Logs";
@@ -242,14 +243,14 @@ static BOOL RGProbeLocalFileServer(NSInteger port, NSString *path) {
         close(fd);
         return NO;
     }
-    NSString *request = [NSString stringWithFormat:@"GET %@ HTTP/1.0\\r\\nRange: bytes=0-15\\r\\n\\r\\n", path];
+    NSString *request = [NSString stringWithFormat:@"GET %@ HTTP/1.0\r\nRange: bytes=0-15\r\n\r\n", path];
     send(fd, [request UTF8String], strlen([request UTF8String]), 0);
     char response[1024] = {0};
     ssize_t received = recv(fd, response, sizeof(response) - 1, 0);
     close(fd);
     if (received > 0) {
         response[received] = 0;
-        char *end = strchr(response, '\\n');
+        char *end = strchr(response, '\n');
         if (end) *end = 0;
         RGLOG(@"Local HTTP probe response: %s", response);
         return strstr(response, "200") != NULL || strstr(response, "206") != NULL;
