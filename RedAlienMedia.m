@@ -269,6 +269,102 @@ static void RGEndAssetSave(NSString *key) {
 static NSMutableSet *RGUIKitVideoSaveTargets = nil;
 static NSMutableSet *RGRedGIFsExportSaveTargets = nil;
 
+static UIView *RGPhotoSaveHUD = nil;
+static UILabel *RGPhotoSaveHUDLabel = nil;
+static UIProgressView *RGPhotoSaveHUDProgress = nil;
+static UIActivityIndicatorView *RGPhotoSaveHUDSpinner = nil;
+
+// The HUD is deliberately non-blocking: gallery progress can be watched while
+// AlienBlue remains usable. A count-based bar is used for sequential image
+// batches; videos show a spinner because AssetsLibrary does not expose progress.
+static void RGShowPhotoSaveProgress(NSString *message, NSUInteger total) {
+    NSString *messageCopy = [(message ?: @"Saving to Photos…") copy];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIWindow *window = [[UIApplication sharedApplication] keyWindow];
+        if (window && !RGPhotoSaveHUD) {
+            CGFloat windowWidth = window.bounds.size.width;
+            CGFloat hudWidth = MIN(300.0, windowWidth - 20.0);
+            CGFloat hudX = (windowWidth - hudWidth) / 2.0;
+            RGPhotoSaveHUD = [[UIView alloc] initWithFrame:CGRectMake(hudX, 26.0, hudWidth, 70.0)];
+            RGPhotoSaveHUD.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.92];
+            RGPhotoSaveHUD.userInteractionEnabled = NO;
+            RGPhotoSaveHUD.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin |
+                UIViewAutoresizingFlexibleRightMargin;
+
+            RGPhotoSaveHUDLabel = [[UILabel alloc] initWithFrame:CGRectMake(10.0, 7.0, hudWidth - 20.0, 31.0)];
+            RGPhotoSaveHUDLabel.backgroundColor = [UIColor clearColor];
+            RGPhotoSaveHUDLabel.textColor = [UIColor whiteColor];
+            RGPhotoSaveHUDLabel.font = [UIFont systemFontOfSize:14.0];
+            RGPhotoSaveHUDLabel.textAlignment = UITextAlignmentCenter;
+            RGPhotoSaveHUDLabel.numberOfLines = 2;
+            [RGPhotoSaveHUD addSubview:RGPhotoSaveHUDLabel];
+
+            RGPhotoSaveHUDProgress = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
+            RGPhotoSaveHUDProgress.frame = CGRectMake(18.0, 48.0, hudWidth - 36.0, 9.0);
+            [RGPhotoSaveHUD addSubview:RGPhotoSaveHUDProgress];
+
+            RGPhotoSaveHUDSpinner = [[UIActivityIndicatorView alloc]
+                initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
+            RGPhotoSaveHUDSpinner.frame = CGRectMake((hudWidth - 24.0) / 2.0, 42.0, 24.0, 24.0);
+            RGPhotoSaveHUDSpinner.hidesWhenStopped = YES;
+            [RGPhotoSaveHUD addSubview:RGPhotoSaveHUDSpinner];
+            [window addSubview:RGPhotoSaveHUD];
+        } else if (window && RGPhotoSaveHUD.superview != window) {
+            [RGPhotoSaveHUD removeFromSuperview];
+            [window addSubview:RGPhotoSaveHUD];
+        }
+
+        if (RGPhotoSaveHUDLabel) RGPhotoSaveHUDLabel.text = messageCopy;
+        if (total > 0) {
+            RGPhotoSaveHUDProgress.hidden = NO;
+            RGPhotoSaveHUDSpinner.hidden = YES;
+            [RGPhotoSaveHUDSpinner stopAnimating];
+            [RGPhotoSaveHUDProgress setProgress:0.0f animated:NO];
+        } else {
+            RGPhotoSaveHUDProgress.hidden = YES;
+            RGPhotoSaveHUDSpinner.hidden = NO;
+            [RGPhotoSaveHUDSpinner startAnimating];
+        }
+        [messageCopy release];
+    });
+}
+
+static void RGUpdatePhotoSaveProgress(NSString *message, NSUInteger completed, NSUInteger total) {
+    NSString *messageCopy = [(message ?: @"Saving to Photos…") copy];
+    CGFloat value = total ? MIN(1.0f, (CGFloat)completed / (CGFloat)total) : 0.0f;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (RGPhotoSaveHUDLabel) RGPhotoSaveHUDLabel.text = messageCopy;
+        if (RGPhotoSaveHUDProgress && total > 0) {
+            RGPhotoSaveHUDProgress.hidden = NO;
+            [RGPhotoSaveHUDProgress setProgress:value animated:YES];
+        }
+        [messageCopy release];
+    });
+}
+
+static void RGFinishPhotoSaveProgress(NSString *title, NSString *message) {
+    NSString *titleCopy = [(title ?: @"Save to Photos Finished") copy];
+    NSString *messageCopy = [(message ?: @"The save operation has finished.") copy];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (RGPhotoSaveHUD) {
+            [RGPhotoSaveHUD removeFromSuperview];
+            [RGPhotoSaveHUD release];
+            RGPhotoSaveHUD = nil;
+            RGPhotoSaveHUDLabel = nil;
+            RGPhotoSaveHUDProgress = nil;
+            RGPhotoSaveHUDSpinner = nil;
+        }
+
+        UIAlertView *alert = [[UIAlertView alloc] initWithTitle:titleCopy
+            message:messageCopy delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil];
+        [alert show];
+        [alert release];
+
+        [titleCopy release];
+        [messageCopy release];
+    });
+}
+
 static void RGStartRedGIFsAVExportFallback(NSString *sourcePath, NSString *saveKey, NSString *sourceID);
 static void RGSavePreparedRedGIFsVideoAtPath(NSString *path, NSString *saveKey, NSString *sourceID);
 
@@ -293,9 +389,12 @@ static void RGSavePreparedRedGIFsVideoAtPath(NSString *path, NSString *saveKey, 
     if (error) {
         RGLOG(@"UIKit fallback video save failed source=%@ path=%@: %@ (domain=%@ code=%ld)",
               _sourceID, videoPath, error, [error domain], (long)[error code]);
+        RGFinishPhotoSaveProgress(@"Couldn't Save Video",
+            [NSString stringWithFormat:@"The video couldn't be saved: %@", [error localizedDescription] ?: @"iOS reported an error."]);
     } else {
         RGLOG(@"UIKit fallback video save completed without error source=%@ path=%@",
               _sourceID, videoPath);
+        RGFinishPhotoSaveProgress(@"Saved to Photos", @"The video was saved to your Camera Roll.");
     }
 
     RGEndAssetSave(_saveKey);
@@ -362,6 +461,8 @@ static void RGSavePreparedRedGIFsVideoAtPath(NSString *path, NSString *saveKey, 
         RGLOG(@"RedGIFs Camera Roll compatibility export failed source=%@ status=%ld path=%@ size=%llu error=%@",
               _sourceID, (long)status, _outputPath, size, error);
         RGEndAssetSave(_saveKey);
+        RGFinishPhotoSaveProgress(@"Couldn't Save Video",
+            [NSString stringWithFormat:@"RedGIFs couldn't be prepared for Photos: %@", [error localizedDescription] ?: @"video export failed."]);
     }
 
     [self retain];
@@ -412,9 +513,11 @@ static void RGSavePreparedRedGIFsVideoAtPath(NSString *path, NSString *saveKey, 
             RGLOG(@"RedGIFs compatibility export saved through AssetsLibrary source=%@ path=%@ assetURL=%@",
                   sourceID ?: @"(unknown)", path, assetURL);
             RGEndAssetSave(saveKey);
+            RGFinishPhotoSaveProgress(@"Saved to Photos", @"The RedGIFs video was saved to your Camera Roll.");
         } else {
             RGLOG(@"RedGIFs compatibility export AssetsLibrary save failed source=%@ path=%@ assetURL=%@ error=%@; trying UIKit",
                   sourceID ?: @"(unknown)", path, assetURL, error);
+            RGUpdatePhotoSaveProgress(@"Finishing video save…", 0, 0);
             RGStartUIKitVideoSaveFallback(path, saveKey, sourceID);
         }
     }];
@@ -424,6 +527,7 @@ static void RGStartRedGIFsAVExportFallback(NSString *sourcePath, NSString *saveK
     if (![sourceID hasPrefix:@"redgifs:"]) {
         RGLOG(@"Compatibility export refused for non-RedGIFs source=%@", sourceID ?: @"(unknown)");
         RGEndAssetSave(saveKey);
+        RGFinishPhotoSaveProgress(@"Couldn't Save Video", @"This video could not be prepared for Camera Roll.");
         return;
     }
 
@@ -437,6 +541,7 @@ static void RGStartRedGIFsAVExportFallback(NSString *sourcePath, NSString *saveK
         RGLOG(@"RedGIFs compatibility export unavailable: no 640x480/medium preset source=%@ presets=%@",
               sourceID, presets);
         RGEndAssetSave(saveKey);
+        RGFinishPhotoSaveProgress(@"Couldn't Save Video", @"This RedGIFs video cannot be converted to a Camera Roll format on this device.");
         return;
     }
 
@@ -448,6 +553,7 @@ static void RGStartRedGIFsAVExportFallback(NSString *sourcePath, NSString *saveK
               sourceID, preset);
         [target release];
         RGEndAssetSave(saveKey);
+        RGFinishPhotoSaveProgress(@"Couldn't Save Video", @"iOS could not prepare this RedGIFs video for Camera Roll.");
         return;
     }
 
@@ -460,6 +566,7 @@ static void RGStartRedGIFsAVExportFallback(NSString *sourcePath, NSString *saveK
         [exporter release];
         [target release];
         RGEndAssetSave(saveKey);
+        RGFinishPhotoSaveProgress(@"Couldn't Save Video", @"This device cannot create a Camera Roll copy of the RedGIFs video.");
         return;
     }
 
@@ -480,6 +587,7 @@ static void RGStartRedGIFsAVExportFallback(NSString *sourcePath, NSString *saveK
 
     RGLOG(@"Starting RedGIFs-only Camera Roll compatibility export source=%@ preset=%@ outputType=%@ input=%@ output=%@",
           sourceID, preset, fileType, sourcePath, outputPath);
+    RGUpdatePhotoSaveProgress(@"Preparing RedGIFs video for Camera Roll…", 0, 0);
     [exporter release];
     [target start];
     [target release];
@@ -502,6 +610,7 @@ void RGSaveVideoAtPathToPhotos(NSString *videoPath, NSString *sourceID) {
     NSString *key = [NSString stringWithFormat:@"video:%@", resolvedPath];
     if (!RGBeginAssetSave(key)) return;
 
+    RGShowPhotoSaveProgress(@"Saving video to Photos…", 0);
     ALAssetsLibrary *library = RGGetAssetsLibrary();
     NSURL *fileURL = [NSURL fileURLWithPath:resolvedPath];
     BOOL assetsLibraryCompatible = [library videoAtPathIsCompatibleWithSavedPhotosAlbum:fileURL];
@@ -522,14 +631,18 @@ void RGSaveVideoAtPathToPhotos(NSString *videoPath, NSString *sourceID) {
                 // on this legacy device. Transcode a separate save-only copy now.
                 RGLOG(@"RedGIFs source MP4 rejected by AssetsLibrary; starting Camera Roll export source=%@ path=%@",
                       sourceID, resolvedPath);
+                RGUpdatePhotoSaveProgress(@"Preparing RedGIFs video for Camera Roll…", 0, 0);
                 RGStartRedGIFsAVExportFallback(resolvedPath, key, sourceID);
             } else {
                 RGEndAssetSave(key);
+                RGFinishPhotoSaveProgress(@"Couldn't Save Video",
+                    [NSString stringWithFormat:@"The video couldn't be saved: %@", [error localizedDescription] ?: @"iOS reported an error."]);
             }
         } else if (assetURL) {
             RGLOG(@"Camera Roll video save succeeded source=%@ path=%@ assetURL=%@",
                   sourceID ?: @"(unknown)", resolvedPath, assetURL);
             RGEndAssetSave(key);
+            RGFinishPhotoSaveProgress(@"Saved to Photos", @"The video was saved to your Camera Roll.");
         } else if (isRedGIFs) {
             // On this iOS 6 device, the AssetsLibrary callback returns nil URL
             // and nil NSError for RedGIFs files that do not actually get saved.
@@ -546,6 +659,7 @@ void RGSaveVideoAtPathToPhotos(NSString *videoPath, NSString *sourceID) {
             RGLOG(@"Regular Reddit video save callback completed without NSError; preserving legacy success behavior source=%@ path=%@ assetURL=(nil)",
                   sourceID ?: @"(unknown)", resolvedPath);
             RGEndAssetSave(key);
+            RGFinishPhotoSaveProgress(@"Saved to Photos", @"The video was saved to your Camera Roll.");
         }
     }];
 }
@@ -622,12 +736,35 @@ static NSData *RGDownloadImageData(NSString *urlString, NSError **outError) {
     return data;
 }
 
-static void RGSaveImageURLAtIndex(NSArray *urls, NSUInteger index, NSString *batchKey, NSString *sourceID) {
+static void RGSaveImageURLAtIndex(NSArray *urls, NSUInteger index, NSString *batchKey,
+                                  NSString *sourceID, NSMutableDictionary *stats) {
     if (index >= [urls count]) {
-        RGLOG(@"Image batch save finished source=%@ count=%lu", sourceID ?: @"(unknown)", (unsigned long)[urls count]);
+        NSUInteger saved = [[stats objectForKey:@"saved"] unsignedIntegerValue];
+        NSUInteger failed = [[stats objectForKey:@"failed"] unsignedIntegerValue];
+        NSUInteger total = [urls count];
+        RGLOG(@"Image batch save finished source=%@ count=%lu saved=%lu failed=%lu",
+              sourceID ?: @"(unknown)", (unsigned long)total,
+              (unsigned long)saved, (unsigned long)failed);
         RGEndAssetSave(batchKey);
+
+        if (failed == 0) {
+            RGFinishPhotoSaveProgress(@"Saved to Photos",
+                [NSString stringWithFormat:@"All %lu photos were saved to your Camera Roll.", (unsigned long)saved]);
+        } else if (saved == 0) {
+            RGFinishPhotoSaveProgress(@"Couldn't Save Photos",
+                [NSString stringWithFormat:@"None of the %lu photos could be saved.", (unsigned long)total]);
+        } else {
+            RGFinishPhotoSaveProgress(@"Save Finished",
+                [NSString stringWithFormat:@"Saved %lu of %lu photos. %lu couldn't be saved.",
+                    (unsigned long)saved, (unsigned long)total, (unsigned long)failed]);
+        }
         return;
     }
+
+    RGUpdatePhotoSaveProgress(
+        [NSString stringWithFormat:@"Saving photo %lu of %lu…",
+            (unsigned long)(index + 1), (unsigned long)[urls count]],
+        index, [urls count]);
 
     NSString *urlString = [urls objectAtIndex:index];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
@@ -637,7 +774,13 @@ static void RGSaveImageURLAtIndex(NSArray *urls, NSUInteger index, NSString *bat
         if (!downloaded) {
             RGLOG(@"Image download failed source=%@ url=%@: %@",
                   sourceID ?: @"(unknown)", urlString, downloadError);
-            RGSaveImageURLAtIndex(urls, index + 1, batchKey, sourceID);
+            NSUInteger failed = [[stats objectForKey:@"failed"] unsignedIntegerValue] + 1;
+            [stats setObject:[NSNumber numberWithUnsignedInteger:failed] forKey:@"failed"];
+            RGUpdatePhotoSaveProgress(
+                [NSString stringWithFormat:@"Processed %lu of %lu photos…",
+                    (unsigned long)(index + 1), (unsigned long)[urls count]],
+                index + 1, [urls count]);
+            RGSaveImageURLAtIndex(urls, index + 1, batchKey, sourceID, stats);
             [pool drain];
             return;
         }
@@ -652,12 +795,21 @@ static void RGSaveImageURLAtIndex(NSArray *urls, NSUInteger index, NSString *bat
             if (error) {
                 RGLOG(@"Camera Roll image save failed source=%@ url=%@: %@ (domain=%@ code=%ld)",
                       sourceID ?: @"(unknown)", urlString, error, [error domain], (long)[error code]);
+                NSUInteger failed = [[stats objectForKey:@"failed"] unsignedIntegerValue] + 1;
+                [stats setObject:[NSNumber numberWithUnsignedInteger:failed] forKey:@"failed"];
             } else {
                 RGLOG(@"Camera Roll image save succeeded source=%@ url=%@ assetURL=%@",
                       sourceID ?: @"(unknown)", urlString, assetURL);
+                NSUInteger saved = [[stats objectForKey:@"saved"] unsignedIntegerValue] + 1;
+                [stats setObject:[NSNumber numberWithUnsignedInteger:saved] forKey:@"saved"];
             }
+            NSUInteger completed = index + 1;
+            RGUpdatePhotoSaveProgress(
+                [NSString stringWithFormat:@"Processed %lu of %lu photos…",
+                    (unsigned long)completed, (unsigned long)[urls count]],
+                completed, [urls count]);
             [imageData release];
-            RGSaveImageURLAtIndex(urls, index + 1, batchKey, sourceID);
+            RGSaveImageURLAtIndex(urls, index + 1, batchKey, sourceID, stats);
         }];
         [pool drain];
     });
@@ -695,7 +847,13 @@ void RGSaveImageURLsToPhotos(NSArray *imageURLs, NSString *sourceID) {
     NSString *sourceCopy = [(sourceID ?: @"gallery") copy];
     RGLOG(@"Starting image batch Save to Photos source=%@ count=%lu",
           sourceCopy, (unsigned long)[urlCopy count]);
-    RGSaveImageURLAtIndex(urlCopy, 0, batchKey, sourceCopy);
+    NSMutableDictionary *stats = [NSMutableDictionary dictionaryWithObjectsAndKeys:
+        [NSNumber numberWithUnsignedInteger:0], @"saved",
+        [NSNumber numberWithUnsignedInteger:0], @"failed", nil];
+    RGShowPhotoSaveProgress(
+        [NSString stringWithFormat:@"Saving 0 of %lu photos…", (unsigned long)[urlCopy count]],
+        [urlCopy count]);
+    RGSaveImageURLAtIndex(urlCopy, 0, batchKey, sourceCopy, stats);
     [urlCopy release];
     [sourceCopy release];
 }
