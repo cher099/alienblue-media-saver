@@ -2,7 +2,7 @@ name: Build iOS tweak
 
 on:
   push:
-    branches: [ main, feature/redalien-ffmpeg-playback ]
+    branches: [ main, feature/redalien-ffmpeg-playback, fix/ios6-redgifs-playback-and-photo-save ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
