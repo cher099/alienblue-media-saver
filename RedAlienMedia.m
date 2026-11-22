@@ -1,5 +1,7 @@
 #import "RedAlienMedia.h"
 #import <UIKit/UIKit.h>
+#import <AssetsLibrary/AssetsLibrary.h>
+#import <dispatch/dispatch.h>
 #import <objc/message.h>
 #import <pthread.h>
 #import <sys/wait.h>
@@ -16,8 +18,8 @@
 static NSString * const RGRoot = @"/var/tmp/redalien";
 static NSString * const RASupport = @"/Library/Application Support/RedAlien";
 static NSMutableSet *RGBusy = nil;
-static NSMutableSet *RGPhotoSaveBusy = nil;
-static id RGPhotoSaveTargetInstance = nil;
+static NSMutableSet *RGAssetSaveBusy = nil;
+static ALAssetsLibrary *RGAssetsLibraryInstance = nil;
 
 static void RGMediaWriteLog(NSString *path, NSData *data) {
     int fd = open([path fileSystemRepresentation], O_WRONLY | O_CREAT | O_APPEND, 0644);
@@ -50,28 +52,6 @@ static void RGMediaLog(NSString *format, ...) {
     NSLog(@"[RedGIFsCompat][Media] %@", message);
 }
 #define RGLOG(fmt, ...) RGMediaLog((fmt), ##__VA_ARGS__)
-
-@interface RGPhotoSaveTarget : NSObject
-- (void)video:(NSString *)videoPath didFinishSavingWithError:(NSError *)error contextInfo:(void *)contextInfo;
-@end
-
-@implementation RGPhotoSaveTarget
-- (void)video:(NSString *)videoPath didFinishSavingWithError:(NSError *)error contextInfo:(void *)contextInfo {
-    NSString *videoID = (NSString *)contextInfo;
-    if (error) {
-        RGLOG(@"UIKit Camera Roll save failed for %@ path=%@: %@ (domain=%@ code=%ld userInfo=%@)",
-              videoID ?: @"(unknown)", videoPath, error, [error domain], (long)[error code], [error userInfo]);
-    } else {
-        RGLOG(@"UIKit Camera Roll save succeeded for %@ path=%@",
-              videoID ?: @"(unknown)", videoPath);
-    }
-
-    @synchronized([NSObject class]) {
-        if (videoID && RGPhotoSaveBusy) [RGPhotoSaveBusy removeObject:videoID];
-    }
-    [videoID release];
-}
-@end
 
 @interface RGDownloader : NSObject {
     NSFileHandle *_file;
@@ -257,49 +237,213 @@ static NSString *RGLoadingHTML(NSString *videoID) {
                 : @"<html><body>Preparing RedGIFs video...</body></html>";
 }
 
+static ALAssetsLibrary *RGGetAssetsLibrary(void) {
+    @synchronized([NSObject class]) {
+        if (!RGAssetsLibraryInstance) {
+            RGAssetsLibraryInstance = [[ALAssetsLibrary alloc] init];
+        }
+        return RGAssetsLibraryInstance;
+    }
+}
+
+static BOOL RGBeginAssetSave(NSString *key) {
+    if (!key.length) return NO;
+    @synchronized([NSObject class]) {
+        if (!RGAssetSaveBusy) RGAssetSaveBusy = [[NSMutableSet alloc] init];
+        if ([RGAssetSaveBusy containsObject:key]) {
+            RGLOG(@"Photo-library save already in progress: %@", key);
+            return NO;
+        }
+        [RGAssetSaveBusy addObject:key];
+    }
+    return YES;
+}
+
+static void RGEndAssetSave(NSString *key) {
+    @synchronized([NSObject class]) {
+        [RGAssetSaveBusy removeObject:key];
+    }
+}
+
+void RGSaveVideoAtPathToPhotos(NSString *videoPath, NSString *sourceID) {
+    if (!videoPath.length || ![[NSFileManager defaultManager] fileExistsAtPath:videoPath]) {
+        RGLOG(@"Video Save to Photos failed: file does not exist path=%@", videoPath ?: @"(nil)");
+        return;
+    }
+
+    NSString *resolvedPath = [videoPath stringByResolvingSymlinksInPath];
+    NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:resolvedPath error:nil];
+    unsigned long long size = [[attributes objectForKey:NSFileSize] unsignedLongLongValue];
+    if (size < 12) {
+        RGLOG(@"Video Save to Photos rejected an empty/invalid file path=%@ size=%llu", resolvedPath, size);
+        return;
+    }
+
+    NSString *key = [NSString stringWithFormat:@"video:%@", resolvedPath];
+    if (!RGBeginAssetSave(key)) return;
+
+    ALAssetsLibrary *library = RGGetAssetsLibrary();
+    NSURL *fileURL = [NSURL fileURLWithPath:resolvedPath];
+    RGLOG(@"Submitting video to iOS Camera Roll: source=%@ path=%@ size=%llu",
+          sourceID ?: @"(unknown)", resolvedPath, size);
+
+    [library writeVideoAtPathToSavedPhotosAlbum:fileURL completionBlock:^(NSURL *assetURL, NSError *error) {
+        if (error) {
+            RGLOG(@"Camera Roll video save failed source=%@ path=%@: %@ (domain=%@ code=%ld)",
+                  sourceID ?: @"(unknown)", resolvedPath, error, [error domain], (long)[error code]);
+        } else {
+            RGLOG(@"Camera Roll video save succeeded source=%@ path=%@ assetURL=%@",
+                  sourceID ?: @"(unknown)", resolvedPath, assetURL);
+        }
+        RGEndAssetSave(key);
+    }];
+}
+
 void RGSaveVideoToPhotos(NSString *videoID) {
     if (!videoID.length) return;
     NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:
                                @"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"];
     if ([videoID rangeOfCharacterFromSet:[allowed invertedSet]].location != NSNotFound) {
-        RGLOG(@"Photo save rejected invalid video ID");
+        RGLOG(@"RedGIFs photo save rejected invalid video ID");
         return;
     }
 
     NSString *cachePath = [RGDir(videoID) stringByAppendingPathComponent:@"video.mp4"];
     if (!RGValidMP4(cachePath)) {
-        RGLOG(@"Photo save requested before a valid cached MP4 exists: %@ path=%@", videoID, cachePath);
+        RGLOG(@"RedGIFs Save to Photos requested before a valid cached MP4 exists: %@ path=%@", videoID, cachePath);
         return;
     }
 
-    // UIKit's legacy save API accepts a filesystem path directly and reports
-    // completion through a selector, which is suitable for this iOS 6 target.
-    NSString *photosPath = [cachePath stringByResolvingSymlinksInPath];
-    BOOL compatible = UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(photosPath);
-    if (!compatible) {
-        RGLOG(@"UIKit reports video is not compatible with the Saved Photos album: %@ path=%@",
-              videoID, photosPath);
+    RGSaveVideoAtPathToPhotos(cachePath, [@"redgifs:" stringByAppendingString:videoID]);
+}
+
+static NSData *RGDownloadImageData(NSString *urlString, NSError **outError) {
+    NSURL *url = [NSURL URLWithString:urlString];
+    if (!url || !([url.scheme.lowercaseString isEqualToString:@"http"] ||
+                  [url.scheme.lowercaseString isEqualToString:@"https"])) {
+        if (outError) *outError = [NSError errorWithDomain:@"RedGIFsCompat" code:20
+            userInfo:[NSDictionary dictionaryWithObject:@"Invalid image URL" forKey:NSLocalizedDescriptionKey]];
+        return nil;
+    }
+
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url
+        cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:45.0];
+    [request setHTTPMethod:@"GET"];
+    [request setValue:@"Mozilla/5.0 (iPhone; CPU iPhone OS 6_1_3 like Mac OS X) AppleWebKit/536.26 (KHTML, like Gecko) Version/6.0 Mobile/10B329 Safari/8536.25"
+        forHTTPHeaderField:@"User-Agent"];
+    [request setValue:@"image/*,*/*;q=0.8" forHTTPHeaderField:@"Accept"];
+    [request setValue:@"https://www.reddit.com/" forHTTPHeaderField:@"Referer"];
+
+    NSError *error = nil;
+    NSURLResponse *response = nil;
+    NSData *data = [NSURLConnection sendSynchronousRequest:request returningResponse:&response error:&error];
+    if (error || !data.length) {
+        if (outError) *outError = error ?: [NSError errorWithDomain:@"RedGIFsCompat" code:21
+            userInfo:[NSDictionary dictionaryWithObject:@"Image download returned no data" forKey:NSLocalizedDescriptionKey]];
+        return nil;
+    }
+
+    if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+        NSInteger status = [(NSHTTPURLResponse *)response statusCode];
+        if (status < 200 || status >= 300) {
+            if (outError) *outError = [NSError errorWithDomain:@"RedGIFsCompat" code:status
+                userInfo:[NSDictionary dictionaryWithObject:[NSString stringWithFormat:@"Image server returned HTTP %ld", (long)status]
+                                                      forKey:NSLocalizedDescriptionKey]];
+            return nil;
+        }
+    }
+
+    if ([data length] > 60ULL * 1024ULL * 1024ULL) {
+        if (outError) *outError = [NSError errorWithDomain:@"RedGIFsCompat" code:22
+            userInfo:[NSDictionary dictionaryWithObject:@"Image exceeds 60 MB safety limit" forKey:NSLocalizedDescriptionKey]];
+        return nil;
+    }
+
+    UIImage *image = [UIImage imageWithData:data];
+    if (!image) {
+        if (outError) *outError = [NSError errorWithDomain:@"RedGIFsCompat" code:23
+            userInfo:[NSDictionary dictionaryWithObject:@"Downloaded data is not a supported image" forKey:NSLocalizedDescriptionKey]];
+        return nil;
+    }
+    return data;
+}
+
+static void RGSaveImageURLAtIndex(NSArray *urls, NSUInteger index, NSString *batchKey, NSString *sourceID) {
+    if (index >= [urls count]) {
+        RGLOG(@"Image batch save finished source=%@ count=%lu", sourceID ?: @"(unknown)", (unsigned long)[urls count]);
+        RGEndAssetSave(batchKey);
         return;
     }
 
-    RGPhotoSaveTarget *target = nil;
-    @synchronized([NSObject class]) {
-        if (!RGPhotoSaveBusy) RGPhotoSaveBusy = [[NSMutableSet alloc] init];
-        if ([RGPhotoSaveBusy containsObject:videoID]) {
-            RGLOG(@"Photo save already in progress for %@", videoID);
+    NSString *urlString = [urls objectAtIndex:index];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+        NSError *downloadError = nil;
+        NSData *downloaded = RGDownloadImageData(urlString, &downloadError);
+        if (!downloaded) {
+            RGLOG(@"Image download failed source=%@ url=%@: %@",
+                  sourceID ?: @"(unknown)", urlString, downloadError);
+            RGSaveImageURLAtIndex(urls, index + 1, batchKey, sourceID);
+            [pool drain];
             return;
         }
-        [RGPhotoSaveBusy addObject:videoID];
-        if (!RGPhotoSaveTargetInstance) {
-            RGPhotoSaveTargetInstance = [[RGPhotoSaveTarget alloc] init];
-        }
-        target = (RGPhotoSaveTarget *)RGPhotoSaveTargetInstance;
+
+        NSData *imageData = [downloaded retain];
+        ALAssetsLibrary *library = RGGetAssetsLibrary();
+        RGLOG(@"Submitting image to Camera Roll source=%@ item=%lu/%lu url=%@ bytes=%lu",
+              sourceID ?: @"(unknown)", (unsigned long)(index + 1), (unsigned long)[urls count],
+              urlString, (unsigned long)[imageData length]);
+
+        [library writeImageDataToSavedPhotosAlbum:imageData metadata:nil completionBlock:^(NSURL *assetURL, NSError *error) {
+            if (error) {
+                RGLOG(@"Camera Roll image save failed source=%@ url=%@: %@ (domain=%@ code=%ld)",
+                      sourceID ?: @"(unknown)", urlString, error, [error domain], (long)[error code]);
+            } else {
+                RGLOG(@"Camera Roll image save succeeded source=%@ url=%@ assetURL=%@",
+                      sourceID ?: @"(unknown)", urlString, assetURL);
+            }
+            [imageData release];
+            RGSaveImageURLAtIndex(urls, index + 1, batchKey, sourceID);
+        }];
+        [pool drain];
+    });
+}
+
+void RGSaveImageURLsToPhotos(NSArray *imageURLs, NSString *sourceID) {
+    if (![imageURLs isKindOfClass:[NSArray class]] || ![imageURLs count]) {
+        RGLOG(@"Image Save to Photos requested with no image URLs source=%@", sourceID ?: @"(unknown)");
+        return;
     }
 
-    NSString *contextVideoID = [videoID copy];
-    RGLOG(@"Submitting cached video to UIKit Camera Roll: %@ path=%@", videoID, photosPath);
-    UISaveVideoAtPathToSavedPhotosAlbum(photosPath, target,
-        @selector(video:didFinishSavingWithError:contextInfo:), contextVideoID);
+    NSMutableArray *cleanURLs = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+    for (id value in imageURLs) {
+        if (![value isKindOfClass:[NSString class]]) continue;
+        NSString *url = [(NSString *)value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        NSURL *parsed = [NSURL URLWithString:url];
+        if (!parsed || !([parsed.scheme.lowercaseString isEqualToString:@"http"] ||
+                         [parsed.scheme.lowercaseString isEqualToString:@"https"])) continue;
+        if ([seen containsObject:url]) continue;
+        [seen addObject:url];
+        [cleanURLs addObject:url];
+    }
+
+    if (![cleanURLs count]) {
+        RGLOG(@"Image Save to Photos found no usable HTTP image URLs source=%@", sourceID ?: @"(unknown)");
+        return;
+    }
+
+    NSString *batchKey = [NSString stringWithFormat:@"images:%@:%@", sourceID ?: @"gallery",
+                          [[NSProcessInfo processInfo] globallyUniqueString]];
+    if (!RGBeginAssetSave(batchKey)) return;
+
+    NSArray *urlCopy = [cleanURLs copy];
+    NSString *sourceCopy = [(sourceID ?: @"gallery") copy];
+    RGLOG(@"Starting image batch Save to Photos source=%@ count=%lu",
+          sourceCopy, (unsigned long)[urlCopy count]);
+    RGSaveImageURLAtIndex(urlCopy, 0, batchKey, sourceCopy);
+    [urlCopy release];
+    [sourceCopy release];
 }
 
 static void *RGWorker(void *arg) {
