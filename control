@@ -1,6 +1,6 @@
 Package: dev.cherwin.redalien.redgifs
 Name: RedAlien RedGIFs Compatibility
-Version: 0.2.4
+Version: 0.2.5
 Architecture: iphoneos-arm
 Description: RedGIFs compatibility add-on that restores RedAlien video playback for RedGIFs and prepares Photos saving.
 Maintainer: cher099
