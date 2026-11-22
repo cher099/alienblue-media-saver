@@ -20,6 +20,9 @@ static UIApplicationOpenURLIMP OriginalUIApplicationOpenURL = NULL;
 static BOOL RGSaveHookInstalled = NO;
 static IMP OriginalUIActionSheetShowInView = NULL;
 static BOOL RGActionSheetHookInstalled = NO;
+static NSString *RGActiveVideoID = nil;
+static char RGActionSheetVideoIDKey;
+static NSMutableDictionary *RGActionSheetDelegateOriginalIMPs = nil;
 
 
 #import <stdarg.h>
@@ -212,6 +215,16 @@ static void RGRespondWithHTML(id protocol, NSString *html, NSInteger status) {
         (protocol, selector, status, headers, body);
 }
 
+static void RGSetActiveVideoID(NSString *videoID) {
+    if (!videoID.length) return;
+    @synchronized([NSObject class]) {
+        if (RGActiveVideoID != videoID) {
+            [RGActiveVideoID release];
+            RGActiveVideoID = [videoID copy];
+        }
+    }
+}
+
 static BOOL RGHandleSaveURL(NSURL *url) {
     if (![[url.scheme lowercaseString] isEqualToString:@"redgifscompat"] ||
         ![[url.host lowercaseString] isEqualToString:@"save"]) return NO;
@@ -231,6 +244,63 @@ static BOOL RGHookUIApplicationOpenURL(id self, SEL command, NSURL *url) {
     return OriginalUIApplicationOpenURL ? OriginalUIApplicationOpenURL(self, command, url) : NO;
 }
 
+static void RGHookActionSheetDelegateClickedButton(id delegate, SEL command, id sheet, NSInteger buttonIndex);
+
+static void RGInstallActionSheetDelegateHook(id delegate) {
+    if (!delegate) return;
+    Class delegateClass = [delegate class];
+    SEL selector = NSSelectorFromString(@"actionSheet:clickedButtonAtIndex:");
+    Method method = class_getInstanceMethod(delegateClass, selector);
+    if (!method) {
+        RGLog(@"Share-menu delegate %@ has no actionSheet:clickedButtonAtIndex: callback",
+              NSStringFromClass(delegateClass));
+        return;
+    }
+
+    @synchronized([NSObject class]) {
+        if (!RGActionSheetDelegateOriginalIMPs) {
+            RGActionSheetDelegateOriginalIMPs = [[NSMutableDictionary alloc] init];
+        }
+        NSString *classKey = NSStringFromClass(delegateClass);
+        if ([RGActionSheetDelegateOriginalIMPs objectForKey:classKey]) return;
+
+        IMP original = NULL;
+        MSHookMessageEx(delegateClass, selector,
+                        (IMP)RGHookActionSheetDelegateClickedButton, &original);
+        if (original) {
+            [RGActionSheetDelegateOriginalIMPs setObject:[NSValue valueWithPointer:original]
+                                                  forKey:classKey];
+            RGLog(@"Hooked AlienBlue Share-menu callback on %@", classKey);
+        }
+    }
+}
+
+static void RGHookActionSheetDelegateClickedButton(id delegate, SEL command, id sheet, NSInteger buttonIndex) {
+    SEL titleSelector = NSSelectorFromString(@"buttonTitleAtIndex:");
+    NSString *title = [sheet respondsToSelector:titleSelector] ?
+        ((id (*)(id, SEL, NSUInteger))objc_msgSend)(sheet, titleSelector, (NSUInteger)buttonIndex) : nil;
+
+    if ([title isEqualToString:@"Save to Photos"]) {
+        NSString *videoID = objc_getAssociatedObject(sheet, &RGActionSheetVideoIDKey);
+        if (videoID.length) {
+            RGLog(@"AlienBlue Share menu selected Save to Photos for %@", videoID);
+            RGSaveVideoToPhotos(videoID);
+        } else {
+            RGLog(@"Save to Photos selected but this action sheet has no RedGIFs video ID");
+        }
+        return;
+    }
+
+    NSString *classKey = NSStringFromClass([delegate class]);
+    IMP original = nil;
+    @synchronized([NSObject class]) {
+        original = [[RGActionSheetDelegateOriginalIMPs objectForKey:classKey] pointerValue];
+    }
+    if (original) {
+        ((void (*)(id, SEL, id, NSInteger))original)(delegate, command, sheet, buttonIndex);
+    }
+}
+
 static void RGHookActionSheetShowInView(id self, SEL command, id view) {
     NSUInteger count = 0;
     SEL countSelector = NSSelectorFromString(@"numberOfButtons");
@@ -244,12 +314,31 @@ static void RGHookActionSheetShowInView(id self, SEL command, id view) {
         }
         id delegate = [self respondsToSelector:@selector(delegate)] ?
             ((id (*)(id, SEL))objc_msgSend)(self, @selector(delegate)) : nil;
+        NSString *delegateName = delegate ? NSStringFromClass([delegate class]) : @"(nil)";
         RGLog(@"UIActionSheet presented class=%@ delegate=%@ buttons=%@ cancelIndex=%ld",
-              NSStringFromClass([self class]),
-              delegate ? NSStringFromClass([delegate class]) : @"(nil)",
-              titles,
+              NSStringFromClass([self class]), delegateName, titles,
               (long)([self respondsToSelector:NSSelectorFromString(@"cancelButtonIndex")] ?
                   ((NSInteger (*)(id, SEL))objc_msgSend)(self, NSSelectorFromString(@"cancelButtonIndex")) : -1));
+
+        BOOL isAlienBlueVideoMenu =
+            [delegateName rangeOfString:@"BrowserViewController"].location != NSNotFound &&
+            [titles containsObject:@"Open in Safari"] &&
+            [titles containsObject:@"Save to Reddit"];
+
+        NSString *videoID = nil;
+        @synchronized([NSObject class]) {
+            videoID = [[RGActiveVideoID retain] autorelease];
+        }
+
+        if (isAlienBlueVideoMenu && videoID.length && ![titles containsObject:@"Save to Photos"]) {
+            SEL addButtonSelector = NSSelectorFromString(@"addButtonWithTitle:");
+            if ([self respondsToSelector:addButtonSelector]) {
+                ((NSInteger (*)(id, SEL, id))objc_msgSend)(self, addButtonSelector, @"Save to Photos");
+                objc_setAssociatedObject(self, &RGActionSheetVideoIDKey, videoID, OBJC_ASSOCIATION_COPY_NONATOMIC);
+                RGInstallActionSheetDelegateHook(delegate);
+                RGLog(@"Added Save to Photos to AlienBlue Share menu for %@", videoID);
+            }
+        }
     }
     if (OriginalUIActionSheetShowInView) {
         ((void (*)(id, SEL, id))OriginalUIActionSheetShowInView)(self, command, view);
@@ -285,7 +374,9 @@ static void RGInstallSaveHook(void) {
 }
 
 static BOOL RGHookCanInitWithRequest(id self, SEL command, NSURLRequest *request) {
-    if (RGVideoIDFromURL(request.URL)) {
+    NSString *videoID = RGVideoIDFromURL(request.URL);
+    if (videoID) {
+        RGSetActiveVideoID(videoID);
         RGLog(@"Recognized RedGIFs URL host=%@ path=%@", request.URL.host, request.URL.path);
         return YES;
     }
@@ -307,6 +398,7 @@ static void RGHookPatchRequest(id self, SEL command, NSMutableURLRequest *reques
         return;
     }
 
+    RGSetActiveVideoID(videoID);
     NSString *userAgent = [request valueForHTTPHeaderField:@"User-Agent"];
     // First check RedAlien's shared cache/worker state. Avoid repeating the
     // RedGIFs API lookup when a download is already running or cached.
