@@ -265,6 +265,71 @@ static void RGEndAssetSave(NSString *key) {
     }
 }
 
+static NSMutableSet *RGUIKitVideoSaveTargets = nil;
+
+@interface RGUIKitVideoSaveTarget : NSObject {
+    NSString *_saveKey;
+    NSString *_sourceID;
+}
+- (id)initWithSaveKey:(NSString *)saveKey sourceID:(NSString *)sourceID;
+- (void)video:(NSString *)videoPath didFinishSavingWithError:(NSError *)error contextInfo:(void *)contextInfo;
+@end
+
+@implementation RGUIKitVideoSaveTarget
+- (id)initWithSaveKey:(NSString *)saveKey sourceID:(NSString *)sourceID {
+    self = [super init];
+    if (self) {
+        _saveKey = [saveKey copy];
+        _sourceID = [(sourceID ?: @"(unknown)") copy];
+    }
+    return self;
+}
+- (void)video:(NSString *)videoPath didFinishSavingWithError:(NSError *)error contextInfo:(void *)contextInfo {
+    if (error) {
+        RGLOG(@"UIKit fallback video save failed source=%@ path=%@: %@ (domain=%@ code=%ld)",
+              _sourceID, videoPath, error, [error domain], (long)[error code]);
+    } else {
+        RGLOG(@"UIKit fallback video save completed without error source=%@ path=%@",
+              _sourceID, videoPath);
+    }
+
+    RGEndAssetSave(_saveKey);
+    // Keep the target alive while removing the set's retaining reference.
+    [self retain];
+    @synchronized([NSObject class]) {
+        [RGUIKitVideoSaveTargets removeObject:self];
+    }
+    [self release];
+}
+- (void)dealloc {
+    [_saveKey release];
+    [_sourceID release];
+    [super dealloc];
+}
+@end
+
+static void RGStartUIKitVideoSaveFallback(NSString *path, NSString *saveKey, NSString *sourceID) {
+    if (!UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(path)) {
+        RGLOG(@"UIKit video-save fallback skipped: iOS reports incompatible file source=%@ path=%@",
+              sourceID ?: @"(unknown)", path);
+        RGEndAssetSave(saveKey);
+        return;
+    }
+
+    RGUIKitVideoSaveTarget *target = [[RGUIKitVideoSaveTarget alloc]
+        initWithSaveKey:saveKey sourceID:sourceID];
+    @synchronized([NSObject class]) {
+        if (!RGUIKitVideoSaveTargets) RGUIKitVideoSaveTargets = [[NSMutableSet alloc] init];
+        [RGUIKitVideoSaveTargets addObject:target];
+    }
+
+    RGLOG(@"Trying UIKit video-save fallback source=%@ path=%@",
+          sourceID ?: @"(unknown)", path);
+    UISaveVideoAtPathToSavedPhotosAlbum(path, target,
+        @selector(video:didFinishSavingWithError:contextInfo:), NULL);
+    [target release];
+}
+
 void RGSaveVideoAtPathToPhotos(NSString *videoPath, NSString *sourceID) {
     if (!videoPath.length || ![[NSFileManager defaultManager] fileExistsAtPath:videoPath]) {
         RGLOG(@"Video Save to Photos failed: file does not exist path=%@", videoPath ?: @"(nil)");
@@ -284,6 +349,11 @@ void RGSaveVideoAtPathToPhotos(NSString *videoPath, NSString *sourceID) {
 
     ALAssetsLibrary *library = RGGetAssetsLibrary();
     NSURL *fileURL = [NSURL fileURLWithPath:resolvedPath];
+    BOOL assetsLibraryCompatible = [library videoAtPathIsCompatibleWithSavedPhotosAlbum:fileURL];
+    BOOL uiKitCompatible = UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(resolvedPath);
+    RGLOG(@"Video compatibility source=%@ path=%@ size=%llu AssetsLibrary=%@ UIKit=%@",
+          sourceID ?: @"(unknown)", resolvedPath, size,
+          assetsLibraryCompatible ? @"YES" : @"NO", uiKitCompatible ? @"YES" : @"NO");
     RGLOG(@"Submitting video to iOS Camera Roll: source=%@ path=%@ size=%llu",
           sourceID ?: @"(unknown)", resolvedPath, size);
 
@@ -291,11 +361,24 @@ void RGSaveVideoAtPathToPhotos(NSString *videoPath, NSString *sourceID) {
         if (error) {
             RGLOG(@"Camera Roll video save failed source=%@ path=%@: %@ (domain=%@ code=%ld)",
                   sourceID ?: @"(unknown)", resolvedPath, error, [error domain], (long)[error code]);
-        } else {
+            RGEndAssetSave(key);
+        } else if (assetURL) {
             RGLOG(@"Camera Roll video save succeeded source=%@ path=%@ assetURL=%@",
                   sourceID ?: @"(unknown)", resolvedPath, assetURL);
+            RGEndAssetSave(key);
+        } else {
+            // Apple documents a nil assetURL as "video not saved". Some legacy
+            // iOS builds have returned nil URL + nil NSError; do not report this
+            // as success. Try UIKit only when its own compatibility check passed.
+            RGLOG(@"Camera Roll video save returned nil assetURL without NSError; treating as failure source=%@ path=%@ AssetsLibraryCompatible=%@ UIKitCompatible=%@",
+                  sourceID ?: @"(unknown)", resolvedPath,
+                  assetsLibraryCompatible ? @"YES" : @"NO", uiKitCompatible ? @"YES" : @"NO");
+            if (uiKitCompatible) {
+                RGStartUIKitVideoSaveFallback(resolvedPath, key, sourceID);
+            } else {
+                RGEndAssetSave(key);
+            }
         }
-        RGEndAssetSave(key);
     }];
 }
 
