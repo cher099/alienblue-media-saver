@@ -283,15 +283,6 @@ void RGSaveVideoToPhotos(NSString *videoID) {
         });
 }
 
-static NSString *RGSaveHTML(NSString *path, NSString *videoID) {
-    if (!RGValidMP4(path)) return nil;
-    NSString *saveButton = [NSString stringWithFormat:
-        @"<button id='rg-save-photo' style='padding:14px 20px;background:#1877d2;border:0;border-radius:7px;color:#fff;font:bold 16px Helvetica,Arial,sans-serif;' onclick='this.innerHTML=\"Saving to Photos...\";window.location.href=\"redgifscompat://save/%@\";return false;'>Save to Photos</button>",
-        videoID];
-    return [NSString stringWithFormat:
-        @"<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'></head><body style='margin:0;padding:28px 16px;background:#111;color:#fff;font:16px Helvetica,Arial,sans-serif;text-align:center;'><p style='margin:8px 0 22px;'>RedGIFs video is ready.</p>%@<p style='margin-top:18px;color:#aaa;font-size:12px;'>The video will be saved to your Camera Roll.</p></body></html>",
-        saveButton];
-}
 static void *RGWorker(void *arg) {
     NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
     NSDictionary *info = (NSDictionary *)arg;
@@ -346,7 +337,28 @@ NSString *RGPlaybackHTMLForVideo(NSString *videoID, NSString *mediaURL, NSString
     NSString *dir = RGDir(videoID);
     if (!dir) return nil;
     NSString *video = [dir stringByAppendingPathComponent:@"video.mp4"];
-    if (RGValidMP4(video)) { RGLOG(@"Cached video found id=%@ path=%@", videoID, video); return RGSaveHTML(video, videoID); }
+    if (RGValidMP4(video)) {
+        RGLOG(@"Cached video found id=%@ path=%@", videoID, video);
+        Class serverClass = NSClassFromString(@"HTTPServer");
+        SEL portSelector = NSSelectorFromString(@"currentPort");
+        NSInteger port = (serverClass && [serverClass respondsToSelector:portSelector]) ?
+            ((NSInteger (*)(id, SEL))objc_msgSend)(serverClass, portSelector) : 0;
+        if (port <= 0) {
+            RGLOG(@"RedAlien HTTPServer is not ready; cannot build the native player URL");
+            return RGLoadingHTML(videoID);
+        }
+        NSString *videoPath = [video stringByReplacingOccurrencesOfString:@"/private" withString:@""];
+        NSString *videoURL = [NSString stringWithFormat:@"http://127.0.0.1:%ld%@", (long)port, videoPath];
+        NSString *player = RGTemplate(@"vPlayer.html");
+        if (player.length) {
+            RGLOG(@"Using RedAlien vPlayer.html for RedGIFs %@ at port %ld", videoID, (long)port);
+            return [player stringByReplacingOccurrencesOfString:@"{{VIDEO_URL}}" withString:videoURL];
+        }
+        RGLOG(@"RedAlien vPlayer.html is missing; using a minimal HTML5 video fallback");
+        return [NSString stringWithFormat:
+            @"<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'></head><body style='margin:0;background:#000'><video controls='controls' autoplay='autoplay' style='width:100%%;height:100%%' src='%@'></video></body></html>",
+            videoURL];
+    }
     @synchronized([NSObject class]) {
         if (!RGBusy) RGBusy = [[NSMutableSet alloc] init];
         if ([RGBusy containsObject:videoID]) { RGLOG(@"Video %@ already processing; returning loading HTML", videoID); return RGLoadingHTML(videoID); }
