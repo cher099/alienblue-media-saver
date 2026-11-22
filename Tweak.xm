@@ -15,6 +15,9 @@ typedef void (*RAPatchRequestIMP)(id, SEL, NSMutableURLRequest *);
 static RACanInitIMP OriginalCanInitWithRequest = NULL;
 static RAPatchRequestIMP OriginalPatchRequest = NULL;
 static BOOL RGHooksInstalled = NO;
+typedef BOOL (*UIApplicationOpenURLIMP)(id, SEL, NSURL *);
+static UIApplicationOpenURLIMP OriginalUIApplicationOpenURL = NULL;
+static BOOL RGSaveHookInstalled = NO;
 
 #import <stdarg.h>
 
@@ -206,6 +209,39 @@ static void RGRespondWithHTML(id protocol, NSString *html, NSInteger status) {
         (protocol, selector, status, headers, body);
 }
 
+static BOOL RGHandleSaveURL(NSURL *url) {
+    if (![[url.scheme lowercaseString] isEqualToString:@"redgifscompat"] ||
+        ![[url.host lowercaseString] isEqualToString:@"save"]) return NO;
+    NSArray *parts = [url.path componentsSeparatedByString:@"/"];
+    NSString *videoID = [parts count] > 1 ? [parts objectAtIndex:1] : nil;
+    if (videoID.length) {
+        RGLog(@"Save-to-Photos action requested for %@", videoID);
+        RGSaveVideoToPhotos(videoID);
+    } else {
+        RGLog(@"Save-to-Photos URL missing video ID");
+    }
+    return YES;
+}
+
+static BOOL RGHookUIApplicationOpenURL(id self, SEL command, NSURL *url) {
+    if (RGHandleSaveURL(url)) return YES;
+    return OriginalUIApplicationOpenURL ? OriginalUIApplicationOpenURL(self, command, url) : NO;
+}
+
+static void RGInstallSaveHook(void) {
+    if (RGSaveHookInstalled) return;
+    Class appClass = NSClassFromString(@"UIApplication");
+    Method method = appClass ? class_getInstanceMethod(appClass, @selector(openURL:)) : NULL;
+    if (!method) return;
+    MSHookMessageEx(appClass, @selector(openURL:),
+                    (IMP)RGHookUIApplicationOpenURL,
+                    (IMP *)&OriginalUIApplicationOpenURL);
+    if (OriginalUIApplicationOpenURL) {
+        RGSaveHookInstalled = YES;
+        RGLog(@"Installed UIApplication save-to-Photos URL hook");
+    }
+}
+
 static BOOL RGHookCanInitWithRequest(id self, SEL command, NSURLRequest *request) {
     if (RGVideoIDFromURL(request.URL)) {
         RGLog(@"Recognized RedGIFs URL host=%@ path=%@", request.URL.host, request.URL.path);
@@ -292,6 +328,7 @@ static void RGInstallHooks(void) {
 static void RGImageAdded(const struct mach_header *header, intptr_t slide) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+        RGInstallSaveHook();
         RGInstallHooks();
         [pool drain];
     });
@@ -306,6 +343,7 @@ static void RGImageAdded(const struct mach_header *header, intptr_t slide) {
           processName ? processName : @"(unknown)",
           bundleID ? bundleID : @"(unknown)");
 
+    RGInstallSaveHook();
     RGInstallHooks();
     _dyld_register_func_for_add_image(RGImageAdded);
     [pool drain];
