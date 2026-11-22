@@ -484,6 +484,126 @@ static NSDictionary *RGGallerySaveContext(id galleryController) {
             NSStringFromClass([galleryController class]), @"source", nil];
 }
 
+static NSString *RGDecodedRedditImageURL(NSString *value) {
+    if (![value isKindOfClass:[NSString class]]) return nil;
+    NSString *decoded = [value stringByReplacingOccurrencesOfString:@"&amp;" withString:@"&"];
+    decoded = [decoded stringByReplacingOccurrencesOfString:@"&#38;" withString:@"&"];
+    decoded = [decoded stringByReplacingOccurrencesOfString:@"\\u0026" withString:@"&"];
+    return decoded;
+}
+
+static void RGAppendRedditPreviewURLs(id preview, NSMutableArray *urls, NSMutableSet *seen) {
+    if (![preview isKindOfClass:[NSDictionary class]]) return;
+    NSArray *images = [(NSDictionary *)preview objectForKey:@"images"];
+    if (![images isKindOfClass:[NSArray class]]) return;
+
+    for (id image in images) {
+        if (![image isKindOfClass:[NSDictionary class]]) continue;
+        NSDictionary *imageInfo = (NSDictionary *)image;
+        NSDictionary *source = [imageInfo objectForKey:@"source"];
+        NSString *url = [source isKindOfClass:[NSDictionary class]] ? [source objectForKey:@"url"] : nil;
+
+        if (![url isKindOfClass:[NSString class]] || !url.length) {
+            NSArray *resolutions = [imageInfo objectForKey:@"resolutions"];
+            for (id resolution in [resolutions reverseObjectEnumerator]) {
+                if (![resolution isKindOfClass:[NSDictionary class]]) continue;
+                id candidate = [resolution objectForKey:@"url"];
+                if ([candidate isKindOfClass:[NSString class]] && [candidate length]) {
+                    url = candidate;
+                    break;
+                }
+            }
+        }
+
+        RGAppendGalleryURL(urls, seen, RGDecodedRedditImageURL(url));
+    }
+}
+
+static void RGAppendRedditGalleryPayload(id payload,
+                                         NSMutableArray *urls,
+                                         NSMutableSet *seen,
+                                         NSUInteger depth) {
+    if (depth > 3 || ![payload isKindOfClass:[NSDictionary class]]) return;
+    NSDictionary *dictionary = (NSDictionary *)payload;
+
+    NSDictionary *galleryData = [dictionary objectForKey:@"gallery_data"];
+    NSDictionary *mediaMetadata = [dictionary objectForKey:@"media_metadata"];
+    NSArray *items = [galleryData isKindOfClass:[NSDictionary class]] ?
+        [galleryData objectForKey:@"items"] : nil;
+
+    if ([items isKindOfClass:[NSArray class]] && [mediaMetadata isKindOfClass:[NSDictionary class]]) {
+        for (id item in items) {
+            if (![item isKindOfClass:[NSDictionary class]]) continue;
+            id mediaID = [item objectForKey:@"media_id"] ?: [item objectForKey:@"id"];
+            NSDictionary *media = [mediaID isKindOfClass:[NSString class]] ?
+                [mediaMetadata objectForKey:mediaID] : nil;
+            if (![media isKindOfClass:[NSDictionary class]]) continue;
+
+            NSDictionary *source = [media objectForKey:@"s"];
+            NSString *url = [source isKindOfClass:[NSDictionary class]] ?
+                ([source objectForKey:@"u"] ?: [source objectForKey:@"gif"]) : nil;
+            if (![url isKindOfClass:[NSString class]] || !url.length) {
+                NSArray *previews = [media objectForKey:@"p"];
+                for (id preview in [previews reverseObjectEnumerator]) {
+                    if (![preview isKindOfClass:[NSDictionary class]]) continue;
+                    id candidate = [preview objectForKey:@"u"];
+                    if ([candidate isKindOfClass:[NSString class]] && [candidate length]) {
+                        url = candidate;
+                        break;
+                    }
+                }
+            }
+            RGAppendGalleryURL(urls, seen, RGDecodedRedditImageURL(url));
+        }
+    }
+
+    RGAppendRedditPreviewURLs([dictionary objectForKey:@"preview"], urls, seen);
+
+    // Some AlienBlue builds wrap the raw submission dictionary under "data".
+    // Recurse only through known Reddit API wrapper keys to avoid unrelated URLs.
+    for (NSString *key in [NSArray arrayWithObjects:@"data", @"post", @"submission", nil]) {
+        id nested = [dictionary objectForKey:key];
+        if ([nested isKindOfClass:[NSDictionary class]]) {
+            RGAppendRedditGalleryPayload(nested, urls, seen, depth + 1);
+        }
+    }
+}
+
+static NSDictionary *RGBrowserRedditGalleryContext(id browser) {
+    id post = RGObjectForSelector(browser, @"post");
+    id rawPostDictionary = RGObjectForSelector(browser, @"postDictionary");
+    id preview = RGObjectForSelector(post, @"preview");
+
+    NSMutableArray *urls = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+    RGAppendRedditGalleryPayload(rawPostDictionary, urls, seen, 0);
+    RGAppendRedditPreviewURLs(preview, urls, seen);
+
+    NSString *postID = RGSafeVideoID(RGStringForSelector(post, @"ident"));
+    NSString *currentURL = RGStringForSelector(browser, @"currentURL");
+    NSString *postURL = RGStringForSelector(post, @"url");
+
+    NSArray *dictionaryKeys = [rawPostDictionary isKindOfClass:[NSDictionary class]] ?
+        [[(NSDictionary *)rawPostDictionary allKeys] sortedArrayUsingSelector:@selector(compare:)] : nil;
+
+    RGLog(@"Reddit gallery payload probe owner=%@ post=%@ currentURL=%@ postURL=%@ rawKeys=%@ previewClass=%@ imageURLs=%lu",
+          NSStringFromClass([browser class]), postID ?: @"(unknown)",
+          currentURL ?: @"(nil)", postURL ?: @"(nil)",
+          dictionaryKeys ?: (id)@"(not-dictionary)",
+          preview ? NSStringFromClass([preview class]) : @"(nil)",
+          (unsigned long)[urls count]);
+
+    if ([urls count] <= 1) {
+        return nil;
+    }
+
+    NSString *source = [@"reddit-gallery:" stringByAppendingString:postID ?: @"unknown"];
+    RGLog(@"Prepared Reddit native multi-photo gallery context post=%@ images=%lu",
+          postID ?: @"(unknown)", (unsigned long)[urls count]);
+    return [NSDictionary dictionaryWithObjectsAndKeys:
+            @"images", @"kind", [NSArray arrayWithArray:urls], @"urls", source, @"source", nil];
+}
+
 static NSDictionary *RGGallerySaveContextFromOwner(id owner) {
     if (!owner) return nil;
 
@@ -492,10 +612,19 @@ static NSDictionary *RGGallerySaveContextFromOwner(id owner) {
         if (directContext) return directContext;
     }
 
+    // Native Reddit galleries are represented in the BrowserViewController's
+    // Post/postDictionary model, not necessarily by a JMGalleryViewController.
+    // Read gallery_data + media_metadata (or legacy preview.images) before
+    // inspecting the optional content optimizer.
+    if ([owner respondsToSelector:NSSelectorFromString(@"postDictionary")] ||
+        [owner respondsToSelector:NSSelectorFromString(@"post")]) {
+        NSDictionary *redditContext = RGBrowserRedditGalleryContext(owner);
+        if (redditContext) return redditContext;
+    }
+
     // AlienBlue's BrowserViewController inherits JMOptimalBrowserController,
     // which owns the active JMContentOptimizer through its "optimizer" property.
-    // Album pages store their JMGalleryItem objects on
-    // JMAlbumContentOptimizer_iPhone.galleryItems, not on the browser controller.
+    // Imgur album pages store JMGalleryItem objects on their album optimizer.
     id optimizer = RGObjectForSelector(owner, @"optimizer");
 
     // Keep a guarded fallback for builds where the optimizer is exposed by the
