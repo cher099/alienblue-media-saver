@@ -5,7 +5,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = RedGIFsCompat
 RedGIFsCompat_FILES = Tweak.xm RedAlienMedia.m
-RedGIFsCompat_FRAMEWORKS = Foundation UIKit
+RedGIFsCompat_FRAMEWORKS = Foundation UIKit AssetsLibrary
 RedGIFsCompat_CFLAGS = -fno-objc-arc -fblocks
 
 include $(THEOS_MAKE_PATH)/tweak.mk
