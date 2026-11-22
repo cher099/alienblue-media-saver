@@ -321,7 +321,7 @@ static NSString *RGPlayerHTML(NSString *path, NSString *videoID) {
     RGLOG(@"Local MP4 HTTP probe=%@", served ? @"PASS" : @"FAIL");
     html = [html stringByReplacingOccurrencesOfString:@"{{VIDEO_URL}}" withString:url];
     NSString *saveButton = [NSString stringWithFormat:
-        @"<button id=\\"rg-save-photo\\" style=\\"position:absolute;z-index:9999;top:12px;right:12px;padding:9px 12px;background:rgba(30,30,30,.88);border:1px solid #aaa;border-radius:5px;color:#fff;font:14px Helvetica,Arial,sans-serif;\\" onclick=\\"this.innerHTML='Saving...';window.location.href='redgifscompat://save/%@';return false;\\">Save to Photos</button>",
+        @"<button id=\"rg-save-photo\" style=\"position:absolute;z-index:9999;top:12px;right:12px;padding:9px 12px;background:#222;border:1px solid #aaa;border-radius:5px;color:#fff;font:14px Helvetica,Arial,sans-serif;\" onclick=\"this.innerHTML='Saving...';window.location.href='redgifscompat://save/%@';return false;\">Save to Photos</button>",
         videoID];
     NSRange bodyEnd = [html rangeOfString:@"</body>" options:NSCaseInsensitiveSearch];
     if (bodyEnd.location != NSNotFound) {
