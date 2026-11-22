@@ -298,16 +298,19 @@ static void RGShowPhotoSaveProgress(NSString *message, NSUInteger total) {
             RGPhotoSaveHUDLabel.textAlignment = UITextAlignmentCenter;
             RGPhotoSaveHUDLabel.numberOfLines = 2;
             [RGPhotoSaveHUD addSubview:RGPhotoSaveHUDLabel];
+            [RGPhotoSaveHUDLabel release];
 
             RGPhotoSaveHUDProgress = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
             RGPhotoSaveHUDProgress.frame = CGRectMake(18.0, 48.0, hudWidth - 36.0, 9.0);
             [RGPhotoSaveHUD addSubview:RGPhotoSaveHUDProgress];
+            [RGPhotoSaveHUDProgress release];
 
             RGPhotoSaveHUDSpinner = [[UIActivityIndicatorView alloc]
                 initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
             RGPhotoSaveHUDSpinner.frame = CGRectMake((hudWidth - 24.0) / 2.0, 42.0, 24.0, 24.0);
             RGPhotoSaveHUDSpinner.hidesWhenStopped = YES;
             [RGPhotoSaveHUD addSubview:RGPhotoSaveHUDSpinner];
+            [RGPhotoSaveHUDSpinner release];
             [window addSubview:RGPhotoSaveHUD];
         } else if (window && RGPhotoSaveHUD.superview != window) {
             [RGPhotoSaveHUD removeFromSuperview];
