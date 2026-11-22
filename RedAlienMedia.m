@@ -233,6 +233,10 @@ static NSString *RGLoadingHTML(NSString *videoID) {
 static BOOL RGProbeLocalFileServer(NSInteger port, NSString *path) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) { RGLOG(@"Local server probe socket failed errno=%d", errno); return NO; }
+    struct timeval timeout;
+    timeout.tv_sec = 2;
+    timeout.tv_usec = 0;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     struct sockaddr_in address;
     memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
