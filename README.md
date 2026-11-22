@@ -1,51 +1,108 @@
-# RedAlien RedGIFs Compatibility
+# AlienBlue Media Saver
 
-A standalone compatibility add-on for RedGIFs links opened in AlienBlue alongside RedAlien 0.0.4.
+A lightweight MobileSubstrate tweak that extends AlienBlue's native **Save to Photos** action to more media types on legacy iOS devices.
 
-> **Status:** RedGIFs playback is handed back to RedAlien's normal `vPlayer.html` interface after the MP4 is cached. The native AlienBlue **Save to Photos** action is extended to cached regular videos, RedGIFs MP4s, native Reddit galleries, album galleries, and direct GIF/image URLs. Solo-photo saving remains with AlienBlue's existing handler.
+It adds save support for cached Reddit videos, RedGIFs videos, multi-image Reddit galleries, album galleries, and direct GIF/image URLs. AlienBlue's existing single-photo save handler is deliberately left alone.
 
-## Target environment
+> **Tested setup:** iPhone 4S · iOS 6.1.3 · ARMv7 · AlienBlue · RedAlien 0.0.4  
+> The maintainer has confirmed that all supported media save paths, including the progress indicator and completion alerts, work on the target device with v0.2.13. Version 0.2.14 is a branding/documentation/package-metadata update on top of that tested code.
+
+## Features
+
+- **Regular Reddit videos:** Saves RedAlien's cached video file through iOS' Assets Library API, preserving the known-good legacy iOS callback behavior.
+- **RedGIFs videos:** Saves the cached MP4. When iOS 6 cannot add the original file to the Camera Roll, a separate AVFoundation compatibility export is created for saving. The playback cache is not overwritten.
+- **Reddit galleries and album galleries:** Collects image URLs from native Reddit gallery metadata, legacy preview data, or AlienBlue's album optimizer.
+- **GIFs and direct image URLs:** Downloads the original image bytes and submits them to the photo library, preserving GIF data.
+- **Progress feedback:** Gallery batches are processed sequentially and show an item counter plus a progress bar. Video saves show an activity indicator while the save/export operation runs.
+- **Completion feedback:** The final alert reports the number of gallery images saved and any failures, or the result of a video save.
+- **Native single-photo behavior:** AlienBlue's original single-photo handler is passed through unchanged.
+
+## How to use
+
+1. Install AlienBlue Media Saver alongside the required RedAlien dependency.
+2. Open a supported Reddit video, RedGIFs post, gallery, or album in AlienBlue.
+3. Open AlienBlue's **Share** menu.
+4. Choose **Save to Photos**.
+5. For multi-image batches, watch the progress bar; an alert appears when processing finishes.
+
+The add-on only attaches its save action to recognized AlienBlue browser/gallery media contexts. Unrelated menus are left alone.
+
+## Compatibility and dependencies
 
 | Item | Target |
 | --- | --- |
-| Device | iPhone 4S |
+| Device used for validation | iPhone 4S |
 | iOS | 6.1.3 |
-| CPU architecture | ARMv7 |
+| Architecture | ARMv7 |
 | Client | AlienBlue |
-| Existing tweak | RedAlien 0.0.4 |
-| Development host | Windows |
-| Build system | GitHub Actions / Theos |
+| RedAlien | 0.0.4 or later |
+| Build system | Theos / GitHub Actions |
 
-## RedGIFs playback flow
+Package dependencies:
 
-1. Intercept only RedGIFs watch/iframe URLs in RedAlien's `RAProtocol`.
-2. Resolve the RedGIFs MP4 URL using the RedGIFs API.
-3. Download the MP4 to `/var/tmp/redalien/redgifs-<id>/source.mp4`.
-4. Use the installed RedAlien FFmpeg executable to prepare a local MP4 in the same cache directory.
-5. While processing, show RedAlien's existing loading template and status polling.
-6. Once ready, use RedAlien's existing `vPlayer.html` template and local HTTP server URL for playback.
+- MobileSubstrate
+- RedAlien 0.0.4 or later (`dev.spytaspund.redalien`)
+- RedAlien's FFmpeg package (`dev.spytaspund.ffmpeg`)
 
-The add-on does not replace the player with a separate Save to Photos page and does not change playback or cached MP4 generation. The save action uses the iOS Assets Library API for cached MP4 files and downloaded image bytes, including original GIF data. If Assets Library cannot confirm a RedGIFs save with an asset URL, the add-on makes a separate AVFoundation export for Camera Roll compatibility and retries that exported copy. This avoids treating iOS 6's nil-error callback as proof that the original file was saved. The original cached playback MP4 remains untouched. Existing solo-image saving is passed through to AlienBlue. Multi-image and GIF batches display a non-blocking progress HUD with an item counter and progress bar, followed by a completion alert that reports successes and failures. Video saves display an activity HUD while the Camera Roll operation runs, followed by a completion alert. The existing AlienBlue solo-photo handler remains unchanged.
+The package identifier remains `dev.cherwin.redalien.redgifs` so branding updates can be installed as an upgrade over previous versions rather than requiring a separate package identity.
+
+## How this was built: vibe-coded with ChatGPT
+
+This project was developed through a **vibe-coding workflow with ChatGPT as the primary implementation partner**. ChatGPT helped generate and iterate on the implementation, debugging changes, build fixes, and documentation.
+
+Cherwin supplied the requirements, device and compatibility context, and the technical fundamentals used to guide the implementation. He reviewed the generated changes with those fundamentals in mind—especially looking for unsafe operations, unintended behavior, and changes that could disturb AlienBlue or RedAlien—and performed the real-device testing on the iPhone 4S.
+
+In other words: **the implementation was largely AI-assisted/vibe-coded; the project direction, sanity-checking, and device validation were human-led.**
+
+This should not be mistaken for a formal security audit. Human review and successful device testing reduce risk, but they do not guarantee that every code path is safe or free of bugs. AI-generated code can still contain mistakes. Review changes and keep a recovery path before installing tweaks on a primary device.
+
+## Implementation notes
+
+### RedGIFs playback
+
+RedGIFs links are intercepted in RedAlien's `RAProtocol`. The add-on resolves the media URL through the RedGIFs API and hands the resulting cached video back to RedAlien's normal `vPlayer.html` playback interface.
+
+### Save-to-Photos behavior
+
+The add-on works with AlienBlue's existing Share menu and adds a context-aware **Save to Photos** action for supported videos and galleries. Regular videos use the existing Assets Library path. RedGIFs has a save-only AVFoundation fallback because iOS 6 can return a nil asset URL without an NSError even when no photo-library asset was created.
+
+The compatibility export is written as a separate `camera-roll.mp4` or `camera-roll.mov` file in the RedGIFs cache directory. The original cached `video.mp4` used for playback is kept intact. The export uses the 640x480 preset when available, falling back to medium quality.
+
+Gallery images are downloaded and saved one at a time. The next image begins after the previous photo-library callback, allowing the progress count to track completed items. A completion alert distinguishes full success, partial success, and failure.
+
+### What this add-on does not change
+
+- RedAlien's playback UI and normal player handoff.
+- RedAlien's normal cached MP4 generation / FFmpeg processing.
+- The original cached RedGIFs playback MP4 when making a Camera Roll-compatible copy.
+- AlienBlue's existing native single-photo save handler.
+- Unrelated AlienBlue action sheets and menus.
 
 ## Diagnostics
 
-The tweak writes to `/var/mobile/Library/Logs/RedGIFsCompat.log` and `/tmp/RedGIFsCompat.log`. It records media menu discovery, gallery URL counts, image downloads, and Assets Library success or failure. The `UIActionSheet` hook is limited to AlienBlue browser and gallery contexts; unrelated menus are left alone.
+The tweak writes diagnostic logs to:
 
-## Important compatibility notes
+- `/var/mobile/Library/Logs/RedGIFsCompat.log`
+- `/tmp/RedGIFsCompat.log`
 
-- RedAlien's original `supportsCopy()` returns true on iOS 5 and later. This implementation initially follows that stream-copy approach rather than forcing a transcode.
-- A successful FFmpeg remux only confirms that an MP4 container was produced. It does **not** prove that the source codec/profile is supported by the iOS 6.1.3 native player.
-- If copied streams do not play, the next experiment is a fallback transcode using a profile supported by the installed FFmpeg build and iOS 6.
-- RedGIFs API endpoints and CDN behavior are unofficial and may change.
-- The RedGIFs Camera Roll export is a save-only fallback. It uses the iOS 6-compatible 640x480 export preset when available, falling back to medium quality; it never replaces the playback cache.
-- Keep the original RedAlien package available for recovery. A successful ARMv7 build is not proof of successful on-device playback.
+The historic `RedGIFsCompat` log/file naming is retained internally for compatibility and easier diagnosis; the user-facing project name is **AlienBlue Media Saver**.
 
-## Native AlienBlue Share menu
+## Building
 
-The tweak targets AlienBlue's browser Share menu when a regular RedAlien video or RedGIFs cached MP4 exists, and gallery/album Share menus when image URLs can be collected from the gallery model or the browser's Reddit post model. It reads native Reddit gallery payloads from `gallery_data` + `media_metadata`, falls back to legacy `preview.images`, and follows `BrowserViewController.optimizer` to `JMAlbumContentOptimizer_iPhone.galleryItems` for album pages. Regular videos are submitted by file path through `ALAssetsLibrary`, preserving the known-good iOS 6 flow. For RedGIFs, a nil Assets Library asset URL triggers a separate 640x480/medium-quality AVFoundation Camera Roll export directly; the tweak does not rely on UIKit's false-positive nil-error callback for the original cached MP4. Multi-photo galleries and GIFs are saved from their original downloaded image data. Non-media menus and AlienBlue's working single-photo save path are passed through unchanged. This integration still needs on-device testing.
+Build with Theos for ARMv7:
 
-## Upstream attribution
+```sh
+make package FINALPACKAGE=1
+```
 
-RedAlien is a separate upstream project: https://github.com/spytaspund/redalien
+The GitHub Actions workflow also builds the Debian package and uploads it as a workflow artifact.
 
-This repository is an independent compatibility add-on, not an official RedAlien or RedGIFs release. The add-on reuses RedAlien's installed runtime dependency and installed HTML templates without copying or modifying its source files. Preserve upstream copyright and license notices if source files are ever copied into this repository.
+A successful build confirms that the package compiles for ARMv7; it does not replace testing on the target device and iOS version.
+
+## Credits and attribution
+
+- **ChatGPT / OpenAI:** AI coding partner used throughout implementation, debugging, and documentation.
+- **Cherwin:** Project direction, requirements, technical review, and device testing.
+- **RedAlien:** This add-on integrates with the separate upstream project: https://github.com/spytaspund/redalien
+
+AlienBlue Media Saver is an independent community compatibility add-on. It is not an official release of AlienBlue, Reddit, RedGIFs, or RedAlien. It reuses RedAlien's installed runtime dependency and installed HTML templates without copying or modifying its source files. Preserve upstream copyright and license notices if source files are ever copied into this repository.
