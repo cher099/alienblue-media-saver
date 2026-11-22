@@ -272,7 +272,7 @@ static void RGHookWebViewSetDelegate(id self, SEL command, id delegate) {
         IMP original = NULL;
         MSHookMessageEx(delegateClass, selector, (IMP)RGHookWebViewShouldStartLoad, &original);
         if (original) {
-            [RGWebViewDelegateOriginals setObject:[NSValue valueWithPointer:original] forKey:className];
+            [RGWebViewDelegateOriginals setObject:[NSValue valueWithPointer:(void *)original] forKey:className];
             RGLog(@"Hooked UIWebView delegate navigation handler: %@", className);
         }
     }
