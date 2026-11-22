@@ -16,7 +16,7 @@ static NSString * const RGRoot = @"/var/tmp/redalien";
 static NSString * const RASupport = @"/Library/Application Support/RedAlien";
 static NSMutableSet *RGBusy = nil;
 static NSMutableSet *RGPhotoSaveBusy = nil;
-static ALAssetsLibrary *RGPhotoLibrary = nil;
+static id RGPhotoLibrary = nil;
 
 static void RGMediaWriteLog(NSString *path, NSData *data) {
     int fd = open([path fileSystemRepresentation], O_WRONLY | O_CREAT | O_APPEND, 0644);
@@ -288,13 +288,22 @@ void RGSaveVideoToPhotos(NSString *videoID) {
             return;
         }
         [RGPhotoSaveBusy addObject:videoID];
-        if (!RGPhotoLibrary) RGPhotoLibrary = [[ALAssetsLibrary alloc] init];
+        if (!RGPhotoLibrary) {
+            Class libraryClass = NSClassFromString(@"ALAssetsLibrary");
+            if (libraryClass) RGPhotoLibrary = [[libraryClass alloc] init];
+        }
     }
 
     RGLOG(@"Saving cached video to Photos: %@", path);
     NSURL *fileURL = [NSURL fileURLWithPath:path];
-    [RGPhotoLibrary writeVideoAtPathToSavedPhotosAlbum:fileURL
-        completionBlock:^(NSURL *assetURL, NSError *error) {
+    SEL saveSelector = NSSelectorFromString(@"writeVideoAtPathToSavedPhotosAlbum:completionBlock:");
+    if (!RGPhotoLibrary || ![RGPhotoLibrary respondsToSelector:saveSelector]) {
+        RGLOG(@"Photos save unavailable: ALAssetsLibrary API not present");
+        @synchronized([NSObject class]) { [RGPhotoSaveBusy removeObject:videoID]; }
+        return;
+    }
+    ((void (*)(id, SEL, NSURL *, id))objc_msgSend)(RGPhotoLibrary, saveSelector, fileURL,
+        ^(NSURL *assetURL, NSError *error) {
             if (error) {
                 RGLOG(@"Photos save failed for %@: %@", videoID, error);
             } else {
