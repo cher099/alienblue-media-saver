@@ -1,8 +1,8 @@
 Package: dev.cherwin.redalien.redgifs
-Name: RedAlien RedGIFs Compatibility
-Version: 0.2.13
+Name: AlienBlue Media Saver
+Version: 0.2.14
 Architecture: iphoneos-arm
-Description: Adds reliable Save to Photos support for AlienBlue videos, image galleries, single images, and GIFs.
+Description: Adds Save to Photos support for videos, RedGIFs, galleries, and GIFs in AlienBlue.
 Maintainer: cher099
 Author: cher099
 Section: Tweaks
