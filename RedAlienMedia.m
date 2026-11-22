@@ -391,7 +391,7 @@ static void RGSaveImageURLAtIndex(NSArray *urls, NSUInteger index, NSString *bat
             return;
         }
 
-        NSData *imageData = downloaded;
+        NSData *imageData = [downloaded retain];
         ALAssetsLibrary *library = RGGetAssetsLibrary();
         RGLOG(@"Submitting image to Camera Roll source=%@ item=%lu/%lu url=%@ bytes=%lu",
               sourceID ?: @"(unknown)", (unsigned long)(index + 1), (unsigned long)[urls count],
@@ -405,6 +405,7 @@ static void RGSaveImageURLAtIndex(NSArray *urls, NSUInteger index, NSString *bat
                 RGLOG(@"Camera Roll image save succeeded source=%@ url=%@ assetURL=%@",
                       sourceID ?: @"(unknown)", urlString, assetURL);
             }
+            [imageData release];
             RGSaveImageURLAtIndex(urls, index + 1, batchKey, sourceID);
         }];
         [pool drain];
