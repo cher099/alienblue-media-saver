@@ -1,6 +1,7 @@
 #import "RedAlienMedia.h"
 #import <UIKit/UIKit.h>
 #import <AssetsLibrary/AssetsLibrary.h>
+#import <AVFoundation/AVFoundation.h>
 #import <dispatch/dispatch.h>
 #import <objc/message.h>
 #import <pthread.h>
@@ -266,25 +267,32 @@ static void RGEndAssetSave(NSString *key) {
 }
 
 static NSMutableSet *RGUIKitVideoSaveTargets = nil;
+static NSMutableSet *RGRedGIFsExportSaveTargets = nil;
+
+static void RGStartRedGIFsAVExportFallback(NSString *sourcePath, NSString *saveKey, NSString *sourceID);
+static void RGSavePreparedRedGIFsVideoAtPath(NSString *path, NSString *saveKey, NSString *sourceID);
 
 @interface RGUIKitVideoSaveTarget : NSObject {
     NSString *_saveKey;
     NSString *_sourceID;
+    BOOL _tryRedGIFsExportFallback;
 }
-- (id)initWithSaveKey:(NSString *)saveKey sourceID:(NSString *)sourceID;
+- (id)initWithSaveKey:(NSString *)saveKey sourceID:(NSString *)sourceID tryRedGIFsExportFallback:(BOOL)tryExport;
 - (void)video:(NSString *)videoPath didFinishSavingWithError:(NSError *)error contextInfo:(void *)contextInfo;
 @end
 
 @implementation RGUIKitVideoSaveTarget
-- (id)initWithSaveKey:(NSString *)saveKey sourceID:(NSString *)sourceID {
+- (id)initWithSaveKey:(NSString *)saveKey sourceID:(NSString *)sourceID tryRedGIFsExportFallback:(BOOL)tryExport {
     self = [super init];
     if (self) {
         _saveKey = [saveKey copy];
         _sourceID = [(sourceID ?: @"(unknown)") copy];
+        _tryRedGIFsExportFallback = tryExport;
     }
     return self;
 }
 - (void)video:(NSString *)videoPath didFinishSavingWithError:(NSError *)error contextInfo:(void *)contextInfo {
+    BOOL shouldExport = error && _tryRedGIFsExportFallback && [_sourceID hasPrefix:@"redgifs:"];
     if (error) {
         RGLOG(@"UIKit fallback video save failed source=%@ path=%@: %@ (domain=%@ code=%ld)",
               _sourceID, videoPath, error, [error domain], (long)[error code]);
@@ -293,7 +301,13 @@ static NSMutableSet *RGUIKitVideoSaveTargets = nil;
               _sourceID, videoPath);
     }
 
-    RGEndAssetSave(_saveKey);
+    if (shouldExport) {
+        // Keep the save request busy while a RedGIFs-only compatibility export runs.
+        RGStartRedGIFsAVExportFallback(videoPath, _saveKey, _sourceID);
+    } else {
+        RGEndAssetSave(_saveKey);
+    }
+
     // Keep the target alive while removing the set's retaining reference.
     [self retain];
     @synchronized([NSObject class]) {
@@ -308,7 +322,74 @@ static NSMutableSet *RGUIKitVideoSaveTargets = nil;
 }
 @end
 
-static void RGStartUIKitVideoSaveFallback(NSString *path, NSString *saveKey, NSString *sourceID) {
+@interface RGRedGIFsExportSaveTarget : NSObject {
+    AVAssetExportSession *_exportSession;
+    NSString *_outputPath;
+    NSString *_saveKey;
+    NSString *_sourceID;
+}
+- (id)initWithSourcePath:(NSString *)sourcePath saveKey:(NSString *)saveKey sourceID:(NSString *)sourceID;
+- (BOOL)prepare;
+- (void)setExportSession:(AVAssetExportSession *)session outputPath:(NSString *)path;
+- (void)start;
+- (void)exportDidFinish;
+@end
+
+@implementation RGRedGIFsExportSaveTarget
+- (id)initWithSourcePath:(NSString *)sourcePath saveKey:(NSString *)saveKey sourceID:(NSString *)sourceID {
+    self = [super init];
+    if (self) {
+        _saveKey = [saveKey copy];
+        _sourceID = [(sourceID ?: @"(unknown)") copy];
+
+        NSString *directory = [sourcePath stringByDeletingLastPathComponent];
+        _outputPath = [[directory stringByAppendingPathComponent:@"camera-roll.mp4"] copy];
+    }
+    return self;
+}
+- (void)setExportSession:(AVAssetExportSession *)session outputPath:(NSString *)path {
+    [_exportSession release];
+    _exportSession = [session retain];
+    [_outputPath release];
+    _outputPath = [path copy];
+}
+- (void)start {
+    [_exportSession exportAsynchronouslyWithCompletionHandler:^{
+        [self exportDidFinish];
+    }];
+}
+- (void)exportDidFinish {
+    AVAssetExportSessionStatus status = [_exportSession status];
+    NSError *error = [_exportSession error];
+    NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:_outputPath error:nil];
+    unsigned long long size = [[attributes objectForKey:NSFileSize] unsignedLongLongValue];
+
+    if (status == AVAssetExportSessionStatusCompleted && size > 12) {
+        RGLOG(@"RedGIFs Camera Roll compatibility export completed source=%@ path=%@ size=%llu",
+              _sourceID, _outputPath, size);
+        RGSavePreparedRedGIFsVideoAtPath(_outputPath, _saveKey, _sourceID);
+    } else {
+        RGLOG(@"RedGIFs Camera Roll compatibility export failed source=%@ status=%ld path=%@ size=%llu error=%@",
+              _sourceID, (long)status, _outputPath, size, error);
+        RGEndAssetSave(_saveKey);
+    }
+
+    [self retain];
+    @synchronized([NSObject class]) {
+        [RGRedGIFsExportSaveTargets removeObject:self];
+    }
+    [self release];
+}
+- (void)dealloc {
+    [_exportSession release];
+    [_outputPath release];
+    [_saveKey release];
+    [_sourceID release];
+    [super dealloc];
+}
+@end
+
+static void RGStartUIKitVideoSaveFallback(NSString *path, NSString *saveKey, NSString *sourceID, BOOL tryRedGIFsExportFallback) {
     BOOL compatible = UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(path);
     RGLOG(@"UIKit fallback compatibility source=%@ path=%@ compatible=%@; attempting save regardless",
           sourceID ?: @"(unknown)", path, compatible ? @"YES" : @"NO");
@@ -317,7 +398,7 @@ static void RGStartUIKitVideoSaveFallback(NSString *path, NSString *saveKey, NSS
     // otherwise playable MP4 files. Let the save API return the definitive
     // result instead of skipping the attempt based on this probe.
     RGUIKitVideoSaveTarget *target = [[RGUIKitVideoSaveTarget alloc]
-        initWithSaveKey:saveKey sourceID:sourceID];
+        initWithSaveKey:saveKey sourceID:sourceID tryRedGIFsExportFallback:tryRedGIFsExportFallback];
     @synchronized([NSObject class]) {
         if (!RGUIKitVideoSaveTargets) RGUIKitVideoSaveTargets = [[NSMutableSet alloc] init];
         [RGUIKitVideoSaveTargets addObject:target];
@@ -327,6 +408,90 @@ static void RGStartUIKitVideoSaveFallback(NSString *path, NSString *saveKey, NSS
           sourceID ?: @"(unknown)", path);
     UISaveVideoAtPathToSavedPhotosAlbum(path, target,
         @selector(video:didFinishSavingWithError:contextInfo:), NULL);
+    [target release];
+}
+
+static void RGSavePreparedRedGIFsVideoAtPath(NSString *path, NSString *saveKey, NSString *sourceID) {
+    NSURL *fileURL = [NSURL fileURLWithPath:path];
+    ALAssetsLibrary *library = RGGetAssetsLibrary();
+    RGLOG(@"Trying AssetsLibrary with RedGIFs compatibility export source=%@ path=%@",
+          sourceID ?: @"(unknown)", path);
+
+    [library writeVideoAtPathToSavedPhotosAlbum:fileURL completionBlock:^(NSURL *assetURL, NSError *error) {
+        if (!error && assetURL) {
+            RGLOG(@"RedGIFs compatibility export saved through AssetsLibrary source=%@ path=%@ assetURL=%@",
+                  sourceID ?: @"(unknown)", path, assetURL);
+            RGEndAssetSave(saveKey);
+        } else {
+            RGLOG(@"RedGIFs compatibility export AssetsLibrary save failed source=%@ path=%@ assetURL=%@ error=%@; trying UIKit",
+                  sourceID ?: @"(unknown)", path, assetURL, error);
+            RGStartUIKitVideoSaveFallback(path, saveKey, sourceID, NO);
+        }
+    }];
+}
+
+static void RGStartRedGIFsAVExportFallback(NSString *sourcePath, NSString *saveKey, NSString *sourceID) {
+    if (![sourceID hasPrefix:@"redgifs:"]) {
+        RGLOG(@"Compatibility export refused for non-RedGIFs source=%@", sourceID ?: @"(unknown)");
+        RGEndAssetSave(saveKey);
+        return;
+    }
+
+    NSURL *sourceURL = [NSURL fileURLWithPath:sourcePath];
+    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:sourceURL options:nil];
+    NSArray *presets = [AVAssetExportSession exportPresetsCompatibleWithAsset:asset];
+    NSString *preset = [presets containsObject:AVAssetExportPreset640x480] ?
+        AVAssetExportPreset640x480 :
+        ([presets containsObject:AVAssetExportPresetMediumQuality] ? AVAssetExportPresetMediumQuality : nil);
+    if (!preset) {
+        RGLOG(@"RedGIFs compatibility export unavailable: no 640x480/medium preset source=%@ presets=%@",
+              sourceID, presets);
+        RGEndAssetSave(saveKey);
+        return;
+    }
+
+    RGRedGIFsExportSaveTarget *target = [[RGRedGIFsExportSaveTarget alloc]
+        initWithSourcePath:sourcePath saveKey:saveKey sourceID:sourceID];
+    AVAssetExportSession *exporter = [[AVAssetExportSession alloc] initWithAsset:asset presetName:preset];
+    if (!exporter) {
+        RGLOG(@"RedGIFs compatibility export could not create AVAssetExportSession source=%@ preset=%@",
+              sourceID, preset);
+        [target release];
+        RGEndAssetSave(saveKey);
+        return;
+    }
+
+    NSArray *fileTypes = [exporter supportedFileTypes];
+    NSString *fileType = [fileTypes containsObject:AVFileTypeMPEG4] ? AVFileTypeMPEG4 :
+        ([fileTypes containsObject:AVFileTypeQuickTimeMovie] ? AVFileTypeQuickTimeMovie : nil);
+    if (!fileType) {
+        RGLOG(@"RedGIFs compatibility export has no MP4/MOV output type source=%@ supported=%@",
+              sourceID, fileTypes);
+        [exporter release];
+        [target release];
+        RGEndAssetSave(saveKey);
+        return;
+    }
+
+    NSString *outputPath = [[sourcePath stringByDeletingLastPathComponent]
+        stringByAppendingPathComponent:[fileType isEqualToString:AVFileTypeMPEG4] ? @"camera-roll.mp4" : @"camera-roll.mov"];
+    [[NSFileManager defaultManager] removeItemAtPath:outputPath error:nil];
+
+    [target setExportSession:exporter outputPath:outputPath];
+
+    [exporter setOutputURL:[NSURL fileURLWithPath:outputPath]];
+    [exporter setOutputFileType:fileType];
+    [exporter setShouldOptimizeForNetworkUse:YES];
+
+    @synchronized([NSObject class]) {
+        if (!RGRedGIFsExportSaveTargets) RGRedGIFsExportSaveTargets = [[NSMutableSet alloc] init];
+        [RGRedGIFsExportSaveTargets addObject:target];
+    }
+
+    RGLOG(@"Starting RedGIFs-only Camera Roll compatibility export source=%@ preset=%@ outputType=%@ input=%@ output=%@",
+          sourceID, preset, fileType, sourcePath, outputPath);
+    [exporter release];
+    [target start];
     [target release];
 }
 
@@ -365,7 +530,7 @@ void RGSaveVideoAtPathToPhotos(NSString *videoPath, NSString *sourceID) {
             if (isRedGIFs) {
                 // RedGIFs MP4s have historically returned an AssetsLibrary error
                 // on some iOS 6 devices. Give UIKit its own save attempt.
-                RGStartUIKitVideoSaveFallback(resolvedPath, key, sourceID);
+                                RGStartUIKitVideoSaveFallback(resolvedPath, key, sourceID, isRedGIFs);
             } else {
                 RGEndAssetSave(key);
             }
@@ -379,7 +544,7 @@ void RGSaveVideoAtPathToPhotos(NSString *videoPath, NSString *sourceID) {
             RGLOG(@"RedGIFs AssetsLibrary callback returned nil assetURL without NSError; trying UIKit source=%@ path=%@ AssetsLibraryCompatible=%@ UIKitCompatible=%@",
                   sourceID ?: @"(unknown)", resolvedPath,
                   assetsLibraryCompatible ? @"YES" : @"NO", uiKitCompatible ? @"YES" : @"NO");
-            RGStartUIKitVideoSaveFallback(resolvedPath, key, sourceID);
+                            RGStartUIKitVideoSaveFallback(resolvedPath, key, sourceID, isRedGIFs);
         } else {
             // Preserve the behavior that worked for regular Reddit videos on
             // AlienBlue/iOS 6: a nil assetURL with no NSError is not a failure
