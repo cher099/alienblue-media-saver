@@ -225,6 +225,13 @@ static void RGSetActiveVideoID(NSString *videoID) {
     }
 }
 
+static void RGClearActiveVideoID(void) {
+    @synchronized([NSObject class]) {
+        [RGActiveVideoID release];
+        RGActiveVideoID = nil;
+    }
+}
+
 static BOOL RGHandleSaveURL(NSURL *url) {
     if (![[url.scheme lowercaseString] isEqualToString:@"redgifscompat"] ||
         ![[url.host lowercaseString] isEqualToString:@"save"]) return NO;
@@ -279,16 +286,18 @@ static void RGHookActionSheetDelegateClickedButton(id delegate, SEL command, id 
     SEL titleSelector = NSSelectorFromString(@"buttonTitleAtIndex:");
     NSString *title = [sheet respondsToSelector:titleSelector] ?
         ((id (*)(id, SEL, NSUInteger))objc_msgSend)(sheet, titleSelector, (NSUInteger)buttonIndex) : nil;
+    NSString *videoID = objc_getAssociatedObject(sheet, &RGActionSheetVideoIDKey);
+    BOOL isRedGIFsSheet = videoID.length > 0;
+
+    if ([title isEqualToString:@"Save to Photos"] && isRedGIFsSheet) {
+        RGLog(@"AlienBlue Share menu selected Save to Photos for %@", videoID);
+        RGSaveVideoToPhotos(videoID);
+        RGClearActiveVideoID();
+        return;
+    }
 
     if ([title isEqualToString:@"Save to Photos"]) {
-        NSString *videoID = objc_getAssociatedObject(sheet, &RGActionSheetVideoIDKey);
-        if (videoID.length) {
-            RGLog(@"AlienBlue Share menu selected Save to Photos for %@", videoID);
-            RGSaveVideoToPhotos(videoID);
-        } else {
-            RGLog(@"Save to Photos selected but this action sheet has no RedGIFs video ID");
-        }
-        return;
+        RGLog(@"Save to Photos selected on a non-RedGIFs sheet; passing through to AlienBlue");
     }
 
     NSString *classKey = NSStringFromClass([delegate class]);
@@ -300,6 +309,7 @@ static void RGHookActionSheetDelegateClickedButton(id delegate, SEL command, id 
     if (original) {
         ((void (*)(id, SEL, id, NSInteger))original)(delegate, command, sheet, buttonIndex);
     }
+    if (isRedGIFsSheet) RGClearActiveVideoID();
 }
 
 static void RGHookActionSheetShowInView(id self, SEL command, id view) {
