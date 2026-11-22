@@ -18,6 +18,9 @@ static BOOL RGHooksInstalled = NO;
 typedef BOOL (*UIApplicationOpenURLIMP)(id, SEL, NSURL *);
 static UIApplicationOpenURLIMP OriginalUIApplicationOpenURL = NULL;
 static BOOL RGSaveHookInstalled = NO;
+static IMP OriginalUIWebViewSetDelegate = NULL;
+static NSMutableDictionary *RGWebViewDelegateOriginals = nil;
+static BOOL RGWebViewHookInstalled = NO;
 
 #import <stdarg.h>
 
@@ -228,7 +231,65 @@ static BOOL RGHookUIApplicationOpenURL(id self, SEL command, NSURL *url) {
     return OriginalUIApplicationOpenURL ? OriginalUIApplicationOpenURL(self, command, url) : NO;
 }
 
+static BOOL RGHookWebViewShouldStartLoad(id self, SEL command, id webView, NSURLRequest *request, NSInteger navigationType) {
+    NSURL *url = [request URL];
+    if (RGHandleSaveURL(url)) {
+        RGLog(@"Intercepted Save to Photos tap through UIWebView delegate: %@", url);
+        return NO;
+    }
+
+    NSString *className = NSStringFromClass([self class]);
+    IMP original = NULL;
+    @synchronized([NSObject class]) {
+        original = (IMP)[[RGWebViewDelegateOriginals objectForKey:className] pointerValue];
+    }
+    if (original) {
+        return ((BOOL (*)(id, SEL, id, NSURLRequest *, NSInteger))original)
+            (self, command, webView, request, navigationType);
+    }
+    return YES;
+}
+
+static void RGHookWebViewSetDelegate(id self, SEL command, id delegate) {
+    if (OriginalUIWebViewSetDelegate) {
+        ((void (*)(id, SEL, id))OriginalUIWebViewSetDelegate)(self, command, delegate);
+    }
+    if (!delegate) return;
+
+    SEL selector = @selector(webView:shouldStartLoadWithRequest:navigationType:);
+    Class delegateClass = object_getClass(delegate);
+    Method method = class_getInstanceMethod(delegateClass, selector);
+    if (!method) return;
+
+    NSString *className = NSStringFromClass(delegateClass);
+    @synchronized([NSObject class]) {
+        if (!RGWebViewDelegateOriginals) RGWebViewDelegateOriginals = [[NSMutableDictionary alloc] init];
+        if ([RGWebViewDelegateOriginals objectForKey:className]) return;
+
+        IMP original = NULL;
+        MSHookMessageEx(delegateClass, selector, (IMP)RGHookWebViewShouldStartLoad, &original);
+        if (original) {
+            [RGWebViewDelegateOriginals setObject:[NSValue valueWithPointer:original] forKey:className];
+            RGLog(@"Hooked UIWebView delegate navigation handler: %@", className);
+        }
+    }
+}
+
+static void RGInstallWebViewHook(void) {
+    if (RGWebViewHookInstalled) return;
+    Class webViewClass = NSClassFromString(@"UIWebView");
+    Method method = webViewClass ? class_getInstanceMethod(webViewClass, @selector(setDelegate:)) : NULL;
+    if (!method) return;
+    MSHookMessageEx(webViewClass, @selector(setDelegate:),
+                    (IMP)RGHookWebViewSetDelegate, &OriginalUIWebViewSetDelegate);
+    if (OriginalUIWebViewSetDelegate) {
+        RGWebViewHookInstalled = YES;
+        RGLog(@"Installed UIWebView delegate hook");
+    }
+}
+
 static void RGInstallSaveHook(void) {
+    RGInstallWebViewHook();
     if (RGSaveHookInstalled) return;
     Class appClass = NSClassFromString(@"UIApplication");
     Method method = appClass ? class_getInstanceMethod(appClass, @selector(openURL:)) : NULL;
@@ -329,6 +390,7 @@ static void RGImageAdded(const struct mach_header *header, intptr_t slide) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
         RGInstallSaveHook();
+        RGInstallWebViewHook();
         RGInstallHooks();
         [pool drain];
     });
@@ -344,6 +406,7 @@ static void RGImageAdded(const struct mach_header *header, intptr_t slide) {
           bundleID ? bundleID : @"(unknown)");
 
     RGInstallSaveHook();
+    RGInstallWebViewHook();
     RGInstallHooks();
     _dyld_register_func_for_add_image(RGImageAdded);
     [pool drain];
