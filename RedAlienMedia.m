@@ -312,7 +312,7 @@ void RGSaveVideoToPhotos(NSString *videoID) {
             @synchronized([NSObject class]) {
                 [RGPhotoSaveBusy removeObject:videoID];
             }
-        }];
+        });
 }
 
 static NSString *RGPlayerHTML(NSString *path, NSString *videoID) {
