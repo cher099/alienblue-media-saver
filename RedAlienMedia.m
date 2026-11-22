@@ -309,13 +309,13 @@ static NSMutableSet *RGUIKitVideoSaveTargets = nil;
 @end
 
 static void RGStartUIKitVideoSaveFallback(NSString *path, NSString *saveKey, NSString *sourceID) {
-    if (!UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(path)) {
-        RGLOG(@"UIKit video-save fallback skipped: iOS reports incompatible file source=%@ path=%@",
-              sourceID ?: @"(unknown)", path);
-        RGEndAssetSave(saveKey);
-        return;
-    }
+    BOOL compatible = UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(path);
+    RGLOG(@"UIKit fallback compatibility source=%@ path=%@ compatible=%@; attempting save regardless",
+          sourceID ?: @"(unknown)", path, compatible ? @"YES" : @"NO");
 
+    // On legacy iOS, the compatibility probe can be overly restrictive for
+    // otherwise playable MP4 files. Let the save API return the definitive
+    // result instead of skipping the attempt based on this probe.
     RGUIKitVideoSaveTarget *target = [[RGUIKitVideoSaveTarget alloc]
         initWithSaveKey:saveKey sourceID:sourceID];
     @synchronized([NSObject class]) {
@@ -358,26 +358,35 @@ void RGSaveVideoAtPathToPhotos(NSString *videoPath, NSString *sourceID) {
           sourceID ?: @"(unknown)", resolvedPath, size);
 
     [library writeVideoAtPathToSavedPhotosAlbum:fileURL completionBlock:^(NSURL *assetURL, NSError *error) {
+        BOOL isRedGIFs = [sourceID hasPrefix:@"redgifs:"];
         if (error) {
             RGLOG(@"Camera Roll video save failed source=%@ path=%@: %@ (domain=%@ code=%ld)",
                   sourceID ?: @"(unknown)", resolvedPath, error, [error domain], (long)[error code]);
-            RGEndAssetSave(key);
-        } else if (assetURL) {
-            RGLOG(@"Camera Roll video save succeeded source=%@ path=%@ assetURL=%@",
-                  sourceID ?: @"(unknown)", resolvedPath, assetURL);
-            RGEndAssetSave(key);
-        } else {
-            // Apple documents a nil assetURL as "video not saved". Some legacy
-            // iOS builds have returned nil URL + nil NSError; do not report this
-            // as success. Try UIKit only when its own compatibility check passed.
-            RGLOG(@"Camera Roll video save returned nil assetURL without NSError; treating as failure source=%@ path=%@ AssetsLibraryCompatible=%@ UIKitCompatible=%@",
-                  sourceID ?: @"(unknown)", resolvedPath,
-                  assetsLibraryCompatible ? @"YES" : @"NO", uiKitCompatible ? @"YES" : @"NO");
-            if (uiKitCompatible) {
+            if (isRedGIFs) {
+                // RedGIFs MP4s have historically returned an AssetsLibrary error
+                // on some iOS 6 devices. Give UIKit its own save attempt.
                 RGStartUIKitVideoSaveFallback(resolvedPath, key, sourceID);
             } else {
                 RGEndAssetSave(key);
             }
+        } else if (assetURL) {
+            RGLOG(@"Camera Roll video save succeeded source=%@ path=%@ assetURL=%@",
+                  sourceID ?: @"(unknown)", resolvedPath, assetURL);
+            RGEndAssetSave(key);
+        } else if (isRedGIFs) {
+            // RedGIFs may return nil URL + nil NSError on legacy iOS. Try UIKit
+            // rather than treating the compatibility probe as authoritative.
+            RGLOG(@"RedGIFs AssetsLibrary callback returned nil assetURL without NSError; trying UIKit source=%@ path=%@ AssetsLibraryCompatible=%@ UIKitCompatible=%@",
+                  sourceID ?: @"(unknown)", resolvedPath,
+                  assetsLibraryCompatible ? @"YES" : @"NO", uiKitCompatible ? @"YES" : @"NO");
+            RGStartUIKitVideoSaveFallback(resolvedPath, key, sourceID);
+        } else {
+            // Preserve the behavior that worked for regular Reddit videos on
+            // AlienBlue/iOS 6: a nil assetURL with no NSError is not a failure
+            // signal we can rely on for this legacy runtime.
+            RGLOG(@"Regular Reddit video save callback completed without NSError; preserving legacy success behavior source=%@ path=%@ assetURL=(nil)",
+                  sourceID ?: @"(unknown)", resolvedPath);
+            RGEndAssetSave(key);
         }
     }];
 }
