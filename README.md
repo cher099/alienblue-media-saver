@@ -2,7 +2,7 @@
 
 A lightweight MobileSubstrate tweak focused on **saving media from AlienBlue** on legacy iOS devices. It extends AlienBlue's native **Save to Photos** action to supported videos, RedGIFs MP4s, multi-image Reddit galleries, album galleries, and direct GIF/image URLs.
 
-It also handles RedGIFs media retrieval and preparation through the FFmpeg runtime supplied by RedAlien. **This is a media-saving and media-preparation add-on, not a promise that RedGIFs videos will play in AlienBlue.**
+It also brings RedGIFs MP4 media into RedAlien's FFmpeg processing workflow. **This add-on does not implement RedGIFs playback in AlienBlue**; its focus is media saving and FFmpeg-based media preparation.
 
 > **Tested setup:** iPhone 4S · iOS 6.1.3 · ARMv7 · AlienBlue · RedAlien 0.0.4  
 > The maintainer confirmed that the supported save paths, progress indicator, and completion alerts work on the target device with v0.2.13. v0.2.15 is a package-metadata and documentation update on top of that tested implementation.
@@ -10,7 +10,7 @@ It also handles RedGIFs media retrieval and preparation through the FFmpeg runti
 ## What it does
 
 - **Save regular Reddit videos:** Saves a cached video through iOS' Assets Library API, preserving the working legacy iOS callback behavior.
-- **Handle RedGIFs media:** Resolves and downloads the RedGIFs MP4, then runs it through the installed FFmpeg media-preparation step. The current command remuxes the streams into an MP4 container using `-c copy`; it does not re-encode the video or guarantee iOS playback compatibility.
+- **Process RedGIFs through FFmpeg:** Resolves and downloads the RedGIFs MP4, then sends it through RedAlien's installed FFmpeg workflow. In the currently tested implementation, FFmpeg uses stream copy (`-c copy`) to remux the source into an MP4 container; it does not re-encode the streams.
 - **Save RedGIFs videos:** Attempts to save the cached MP4. If iOS 6 does not create a Camera Roll asset, a separate AVFoundation export is made for the save attempt. The original cached media file is not overwritten.
 - **Save Reddit and album galleries:** Collects image URLs from native Reddit gallery metadata, legacy preview data, or AlienBlue's album optimizer.
 - **Save GIFs and direct images:** Downloads the original image bytes and submits them to the photo library, preserving GIF data.
@@ -28,11 +28,13 @@ It also handles RedGIFs media retrieval and preparation through the FFmpeg runti
 
 The tweak only attaches its save action to recognized AlienBlue browser/gallery media contexts. Unrelated menus are left alone.
 
-## RedGIFs and FFmpeg: an important distinction
+## RedGIFs and FFmpeg
 
-The add-on retrieves RedGIFs media and prepares a local MP4 with the FFmpeg executable installed by RedAlien. The current FFmpeg invocation uses stream copy (`-c copy`) and `-movflags +faststart`. This is **remuxing**, not a full video transcode: the audio/video streams are copied into an MP4 container without being re-encoded.
+The add-on retrieves the RedGIFs MP4 and feeds it into the FFmpeg workflow supplied by RedAlien. This makes RedGIFs media processable through the existing FFmpeg path used by the tweak.
 
-As a result, a successful FFmpeg run confirms that an MP4 container was produced; it does **not** prove that the source codec/profile is supported by an iOS 6.1.3 player. AlienBlue Media Saver is not presented as a RedGIFs player or as a fix that guarantees RedGIFs playback.
+In the currently tested implementation, the FFmpeg command uses stream copy (`-c copy`) and `-movflags +faststart`. That operation is **remuxing**, not a codec re-encode: it places the existing audio/video streams into an MP4 container without changing their codecs. It is important to be precise about that distinction—the current build does not force a new H.264 encode.
+
+**AlienBlue Media Saver does not add RedGIFs playback to AlienBlue and does not guarantee that an FFmpeg-generated MP4 will play on iOS 6.1.3.** Its RedGIFs role is retrieval and FFmpeg media preparation, alongside the Save to Photos functionality.
 
 For Camera Roll saving, the tweak has a separate RedGIFs-only AVFoundation fallback. When Assets Library returns no asset URL (including the iOS 6 nil-error case), AVFoundation exports a separate 640x480/medium-quality MP4 or MOV copy and tries saving that copy. The original cached file remains untouched.
 
@@ -68,7 +70,7 @@ This should not be mistaken for a formal security audit. Human review and succes
 ## Implementation boundaries
 
 - The primary purpose is adding and improving **Save to Photos** support in AlienBlue.
-- RedGIFs retrieval and FFmpeg remuxing are media-preparation steps; they do not guarantee playback compatibility.
+- RedGIFs retrieval and FFmpeg processing make the media available to the existing processing workflow; this add-on does not implement RedGIFs playback.
 - The RedGIFs Camera Roll export is a separate save-only fallback.
 - RedAlien's installed FFmpeg executable and package dependency are reused; this project does not bundle its own FFmpeg binary.
 - AlienBlue's existing single-photo save handler is passed through unchanged.
