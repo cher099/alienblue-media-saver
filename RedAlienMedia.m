@@ -329,7 +329,6 @@ static void RGSavePreparedRedGIFsVideoAtPath(NSString *path, NSString *saveKey, 
     NSString *_sourceID;
 }
 - (id)initWithSourcePath:(NSString *)sourcePath saveKey:(NSString *)saveKey sourceID:(NSString *)sourceID;
-- (BOOL)prepare;
 - (void)setExportSession:(AVAssetExportSession *)session outputPath:(NSString *)path;
 - (void)start;
 - (void)exportDidFinish;
