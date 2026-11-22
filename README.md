@@ -25,7 +25,7 @@ A standalone compatibility add-on for RedGIFs links opened in AlienBlue alongsid
 5. While processing, show RedAlien's existing loading template and status polling.
 6. Once ready, use RedAlien's existing `vPlayer.html` template and local HTTP server URL for playback.
 
-The add-on does not replace the player with a separate Save to Photos page. The native AlienBlue Share-menu action submits the cached MP4 to UIKit's Camera Roll save API. Regular Reddit videos and images are not intentionally intercepted by this add-on.
+The add-on does not replace the player with a separate Save to Photos page. It first remuxes the downloaded MP4 without re-encoding; if UIKit reports that the output is incompatible with the device, it falls back to RedAlien-style legacy MPEG-4 Simple Profile encoding. Regular Reddit videos and images are not intentionally intercepted by this add-on.
 
 ## Diagnostics
 
@@ -35,13 +35,14 @@ The tweak writes to `/var/mobile/Library/Logs/RedGIFsCompat.log` and `/tmp/RedGI
 
 - RedAlien's original `supportsCopy()` returns true on iOS 5 and later. This implementation initially follows that stream-copy approach rather than forcing a transcode.
 - A successful FFmpeg remux only confirms that an MP4 container was produced. It does **not** prove that the source codec/profile is supported by the iOS 6.1.3 native player.
-- If copied streams do not play, the next experiment is a fallback transcode using a profile supported by the installed FFmpeg build and iOS 6.
+- When UIKit rejects the remuxed file, the add-on now retries with RedAlien-style MPEG-4 Simple Profile video, 480-pixel maximum dimension, and 20 fps. The final output is accepted only if UIKit reports it compatible with the device.
+- Previously cached incompatible clips are repaired in place on first playback after upgrading.
 - RedGIFs API endpoints and CDN behavior are unofficial and may change.
 - Keep the original RedAlien package available for recovery. A successful ARMv7 build is not proof of successful on-device playback.
 
 ## Native AlienBlue Share menu
 
-The tweak targets AlienBlue's browser Share menu (the sheet containing **Open in Safari** and **Save to Reddit**) and adds **Save to Photos** when the active RedGIFs video has been identified. The selected action is handled by that sheet's delegate callback and calls `UISaveVideoAtPathToSavedPhotosAlbum` for the cached MP4, after checking `UIVideoAtPathIsCompatibleWithSavedPhotosAlbum`. Its completion callback records the actual save result or error. Other action sheets are left unchanged. This integration still needs on-device testing.
+The tweak targets AlienBlue's browser Share menu (the sheet containing **Open in Safari** and **Save to Reddit**) and adds **Save to Photos** when the active RedGIFs video has been identified. The selected action is handled by that sheet's delegate callback and calls `UISaveVideoAtPathToSavedPhotosAlbum` for the cached MP4, after checking `UIVideoAtPathIsCompatibleWithSavedPhotosAlbum`. Its completion callback records the actual save result or error. Non-RedGIFs Save to Photos selections are passed back to AlienBlue unchanged. This integration still needs on-device testing.
 
 ## Upstream attribution
 
