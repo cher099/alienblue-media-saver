@@ -1,6 +1,6 @@
 Package: dev.cherwin.redalien.redgifs
 Name: RedAlien RedGIFs Compatibility
-Version: 0.2.7
+Version: 0.2.8
 Architecture: iphoneos-arm
 Description: Adds reliable Save to Photos support for AlienBlue videos, image galleries, single images, and GIFs.
 Maintainer: cher099
