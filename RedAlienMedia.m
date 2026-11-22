@@ -227,61 +227,6 @@ static BOOL RGRunFFmpeg(NSString *input, NSString *output, NSString *log) {
     RGLOG(@"FFmpeg finished result=%@ exit=%d waitResult=%d log=%@", ok ? @"success" : @"failure", exitCode, (int)result, fflog ?: @"(no ffmpeg log)");
     return ok;
 }
-
-static BOOL RGRunFFmpegRedGIFsPhotoTranscode(NSString *input, NSString *output, NSString *log) {
-    // Save-only transcode: MPEG-4 Part 2 Simple Profile + AAC-LC in MP4.
-    // These are built-in FFmpeg encoders used by the upstream RedAlien
-    // compatibility path; do not require optional libx264/libfdk-aac builds.
-    NSString *filter = @"fps=30,scale='if(gte(iw,ih),min(640,iw),-2)':'if(gte(iw,ih),-2,min(640,ih))',setsar=1";
-    NSString *cmd = [NSString stringWithFormat:
-        @"ffmpeg -nostdin -hide_banner -loglevel warning -y -i %@ "
-         "-map 0:v:0 -map 0:a:0? -vf %@ -sws_flags fast_bilinear "
-         "-c:v mpeg4 -profile:v 0 -q:v 5 -pix_fmt yuv420p "
-         "-c:a aac -b:a 128k -ac 2 -ar 44100 -tag:v mp4v "
-         "-movflags +faststart -f mp4 %@ 2> %@",
-        RGQuote(input), RGQuote(filter), RGQuote(output), RGQuote(log)];
-    const char *command = [cmd UTF8String];
-    if (!command) {
-        RGLOG(@"RedGIFs Photo transcode command could not be encoded");
-        return NO;
-    }
-
-    [[NSFileManager defaultManager] removeItemAtPath:output error:nil];
-    [[NSFileManager defaultManager] removeItemAtPath:log error:nil];
-    RGLOG(@"Starting RedGIFs save-only FFmpeg transcode input=%@ output=%@ log=%@",
-          input, output, log);
-
-    pid_t pid = fork();
-    if (pid == 0) {
-        int fd = open("/dev/null", O_WRONLY);
-        if (fd >= 0) { dup2(fd, STDOUT_FILENO); close(fd); }
-        execl("/bin/sh", "sh", "-c", command, (char *)NULL);
-        _exit(127);
-    }
-    if (pid < 0) {
-        RGLOG(@"RedGIFs Photo transcode fork failed: errno=%d", errno);
-        return NO;
-    }
-
-    int status = 0;
-    pid_t result;
-    do { result = waitpid(pid, &status, 0); } while (result < 0 && errno == EINTR);
-    BOOL exited = result == pid && WIFEXITED(status);
-    int exitCode = exited ? WEXITSTATUS(status) : -1;
-    NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:output error:nil];
-    unsigned long long outputSize = [[attributes objectForKey:NSFileSize] unsignedLongLongValue];
-    BOOL ok = exited && exitCode == 0 && outputSize > 12 && RGValidMP4(output);
-
-    NSString *fflog = [NSString stringWithContentsOfFile:log encoding:NSUTF8StringEncoding error:nil];
-    if (fflog.length > 3000) fflog = [fflog substringFromIndex:fflog.length - 3000];
-    RGLOG(@"RedGIFs Photo transcode finished result=%@ exit=%d waitResult=%d outputSize=%llu log=%@",
-          ok ? @"success" : @"failure", exitCode, (int)result, outputSize,
-          fflog ?: @"(no ffmpeg log)");
-
-    if (!ok) [[NSFileManager defaultManager] removeItemAtPath:output error:nil];
-    return ok;
-}
-
 static NSString *RGTemplate(NSString *name) {
     return [NSString stringWithContentsOfFile:[RASupport stringByAppendingPathComponent:name]
                                       encoding:NSUTF8StringEncoding error:nil];
@@ -424,7 +369,6 @@ static void RGFinishPhotoSaveProgress(NSString *title, NSString *message) {
 }
 
 static void RGStartRedGIFsAVExportFallback(NSString *sourcePath, NSString *saveKey, NSString *sourceID);
-static void RGStartRedGIFsFFmpegSaveFallback(NSString *sourcePath, NSString *saveKey, NSString *sourceID);
 static void RGSavePreparedRedGIFsVideoAtPath(NSString *path, NSString *saveKey, NSString *sourceID);
 
 @interface RGUIKitVideoSaveTarget : NSObject {
@@ -582,73 +526,6 @@ static void RGSavePreparedRedGIFsVideoAtPath(NSString *path, NSString *saveKey, 
     }];
 }
 
-
-static void RGSaveFFmpegPreparedRedGIFsVideoAtPath(NSString *path,
-                                                    NSString *originalPath,
-                                                    NSString *saveKey,
-                                                    NSString *sourceID) {
-    NSURL *fileURL = [NSURL fileURLWithPath:path];
-    ALAssetsLibrary *library = RGGetAssetsLibrary();
-    RGLOG(@"Trying AssetsLibrary with FFmpeg-transcoded RedGIFs save copy source=%@ path=%@",
-          sourceID ?: @"(unknown)", path);
-
-    [library writeVideoAtPathToSavedPhotosAlbum:fileURL completionBlock:^(NSURL *assetURL, NSError *error) {
-        if (!error && assetURL) {
-            RGLOG(@"FFmpeg-transcoded RedGIFs video saved through AssetsLibrary source=%@ path=%@ assetURL=%@",
-                  sourceID ?: @"(unknown)", path, assetURL);
-            RGEndAssetSave(saveKey);
-            RGFinishPhotoSaveProgress(@"Saved to Photos", @"The RedGIFs video was transcoded with FFmpeg and saved to your Camera Roll.");
-        } else {
-            RGLOG(@"FFmpeg-transcoded RedGIFs save copy rejected by AssetsLibrary source=%@ path=%@ assetURL=%@ error=%@; trying AVFoundation on original",
-                  sourceID ?: @"(unknown)", path, assetURL, error);
-            RGUpdatePhotoSaveProgress(@"Trying iOS video converter…", 0, 0);
-            RGStartRedGIFsAVExportFallback(originalPath, saveKey, sourceID);
-        }
-    }];
-}
-
-static void RGStartRedGIFsFFmpegSaveFallback(NSString *sourcePath, NSString *saveKey, NSString *sourceID) {
-    if (![sourceID hasPrefix:@"redgifs:"]) {
-        RGLOG(@"FFmpeg Photo transcode refused for non-RedGIFs source=%@", sourceID ?: @"(unknown)");
-        RGEndAssetSave(saveKey);
-        RGFinishPhotoSaveProgress(@"Couldn't Save Video", @"FFmpeg conversion is only enabled for RedGIFs saves.");
-        return;
-    }
-
-    NSString *directory = [sourcePath stringByDeletingLastPathComponent];
-    NSString *outputPath = [directory stringByAppendingPathComponent:@"camera-roll-ffmpeg.mp4"];
-    NSString *logPath = [directory stringByAppendingPathComponent:@"camera-roll-ffmpeg.log"];
-    NSString *sourceCopy = [sourcePath copy];
-    NSString *outputCopy = [outputPath copy];
-    NSString *logCopy = [logPath copy];
-    NSString *keyCopy = [saveKey copy];
-    NSString *idCopy = [sourceID copy];
-
-    RGUpdatePhotoSaveProgress(@"Transcoding RedGIFs for Photos with FFmpeg…", 0, 0);
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
-        BOOL ok = RGRunFFmpegRedGIFsPhotoTranscode(sourceCopy, outputCopy, logCopy);
-        if (ok) {
-            NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:outputCopy error:nil];
-            unsigned long long size = [[attributes objectForKey:NSFileSize] unsignedLongLongValue];
-            RGLOG(@"RedGIFs FFmpeg save copy ready source=%@ path=%@ size=%llu",
-                  idCopy ?: @"(unknown)", outputCopy, size);
-            RGSaveFFmpegPreparedRedGIFsVideoAtPath(outputCopy, sourceCopy, keyCopy, idCopy);
-        } else {
-            RGLOG(@"RedGIFs FFmpeg save transcode failed; falling back to AVFoundation source=%@ input=%@",
-                  idCopy ?: @"(unknown)", sourceCopy);
-            RGUpdatePhotoSaveProgress(@"FFmpeg conversion unavailable; trying iOS converter…", 0, 0);
-            RGStartRedGIFsAVExportFallback(sourceCopy, keyCopy, idCopy);
-        }
-        [sourceCopy release];
-        [outputCopy release];
-        [logCopy release];
-        [keyCopy release];
-        [idCopy release];
-        [pool drain];
-    });
-}
-
 static void RGStartRedGIFsAVExportFallback(NSString *sourcePath, NSString *saveKey, NSString *sourceID) {
     if (![sourceID hasPrefix:@"redgifs:"]) {
         RGLOG(@"Compatibility export refused for non-RedGIFs source=%@", sourceID ?: @"(unknown)");
@@ -755,10 +632,10 @@ void RGSaveVideoAtPathToPhotos(NSString *videoPath, NSString *sourceID) {
             if (isRedGIFs) {
                 // RedGIFs MP4s are rejected by both native compatibility checks
                 // on this legacy device. Transcode a separate save-only copy now.
-                RGLOG(@"RedGIFs source MP4 rejected by AssetsLibrary; starting save-only FFmpeg transcode source=%@ path=%@",
+                RGLOG(@"RedGIFs source MP4 rejected by AssetsLibrary; starting Camera Roll export source=%@ path=%@",
                       sourceID, resolvedPath);
-                RGUpdatePhotoSaveProgress(@"Transcoding RedGIFs for Photos with FFmpeg…", 0, 0);
-                RGStartRedGIFsFFmpegSaveFallback(resolvedPath, key, sourceID);
+                RGUpdatePhotoSaveProgress(@"Preparing RedGIFs video for Camera Roll…", 0, 0);
+                RGStartRedGIFsAVExportFallback(resolvedPath, key, sourceID);
             } else {
                 RGEndAssetSave(key);
                 RGFinishPhotoSaveProgress(@"Couldn't Save Video",
@@ -774,11 +651,10 @@ void RGSaveVideoAtPathToPhotos(NSString *videoPath, NSString *sourceID) {
             // and nil NSError for RedGIFs files that do not actually get saved.
             // A UIKit nil-error callback was also a false positive, so skip that
             // redundant attempt and convert a separate Camera Roll copy instead.
-            RGLOG(@"RedGIFs AssetsLibrary returned nil assetURL without NSError; bypassing UIKit false-positive path and starting save-only FFmpeg transcode source=%@ path=%@ AssetsLibraryCompatible=%@ UIKitCompatible=%@",
+            RGLOG(@"RedGIFs AssetsLibrary returned nil assetURL without NSError; bypassing UIKit false-positive path and starting Camera Roll export source=%@ path=%@ AssetsLibraryCompatible=%@ UIKitCompatible=%@",
                   sourceID ?: @"(unknown)", resolvedPath,
                   assetsLibraryCompatible ? @"YES" : @"NO", uiKitCompatible ? @"YES" : @"NO");
-            RGUpdatePhotoSaveProgress(@"Transcoding RedGIFs for Photos with FFmpeg…", 0, 0);
-            RGStartRedGIFsFFmpegSaveFallback(resolvedPath, key, sourceID);
+            RGStartRedGIFsAVExportFallback(resolvedPath, key, sourceID);
         } else {
             // Preserve the behavior that worked for regular Reddit videos on
             // AlienBlue/iOS 6: a nil assetURL with no NSError is not a failure
