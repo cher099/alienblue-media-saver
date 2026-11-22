@@ -41,7 +41,7 @@ The tweak writes to `/var/mobile/Library/Logs/RedGIFsCompat.log` and `/tmp/RedGI
 
 ## Native AlienBlue Share menu
 
-The tweak targets AlienBlue's browser Share menu when a regular RedAlien video or RedGIFs cached MP4 exists, and gallery/album Share menus when image URLs can be collected from the gallery model. Videos are submitted by file path through `ALAssetsLibrary`; multi-photo galleries and GIFs are saved from their original downloaded image data. Non-media menus and AlienBlue's working single-photo save path are passed through unchanged. This integration still needs on-device testing.
+The tweak targets AlienBlue's browser Share menu when a regular RedAlien video or RedGIFs cached MP4 exists, and gallery/album Share menus when image URLs can be collected from the gallery model. For album pages, it follows `BrowserViewController.optimizer` to `JMAlbumContentOptimizer_iPhone.galleryItems`, where AlienBlue stores its `JMGalleryItem` models. Videos are submitted by file path through `ALAssetsLibrary`; multi-photo galleries and GIFs are saved from their original downloaded image data. Non-media menus and AlienBlue's working single-photo save path are passed through unchanged. This integration still needs on-device testing.
 
 ## Upstream attribution
 
