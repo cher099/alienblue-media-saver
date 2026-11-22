@@ -2,7 +2,7 @@
 
 A standalone compatibility add-on for RedGIFs links opened in AlienBlue alongside RedAlien 0.0.4.
 
-> **Status: diagnostic build 0.2.1 — build and device testing pending.** The existing diagnostic build has verified that the tweak loads in AlienBlue, hooks RAProtocol, recognizes RedGIFs URLs, and resolves an MP4 URL. This branch replaces the direct HTML5 remote-video response with RedAlien's local video playback flow.
+ > **Status: Save to Photos-focused build 0.2.3.** Inline playback is intentionally out of scope. The add-on resolves and downloads RedGIFs videos, then presents a simple Save to Photos action. The save tap is intercepted through the embedded UIWebView navigation delegate.
 
 ## Target environment
 
@@ -16,18 +16,18 @@ A standalone compatibility add-on for RedGIFs links opened in AlienBlue alongsid
 | Development host | Windows |
 | Build system | GitHub Actions / Theos |
 
-## Playback integration
+## Save-to-Photos flow
 
 The add-on keeps its own package identifier and does not overwrite RedAlien files.
 
-1. Intercept a RedGIFs watch/iframe URL in `RAProtocol`.
-2. Resolve the RedGIFs MP4 URL using the existing API resolver.
-3. Download the MP4 to `/var/tmp/redalien/redgifs-<id>/source.mp4` using a streamed `NSURLConnection` download (150 MB safety limit).
-4. Invoke the already-installed `ffmpeg` executable supplied by RedAlien's `dev.spytaspund.ffmpeg` dependency. The initial implementation remuxes with stream copy and `+faststart`; it does not re-encode.
-5. Write the resulting `video.mp4` and `status.js` under the same cache root RedAlien already uses.
-6. Reuse RedAlien's `vLoading.html`, its `v.redd.it/<id>/status.js` status route, local HTTP server (including byte-range support), and `vPlayer.html`.
+1. Intercept a RedGIFs watch/iframe URL in RedAlien's `RAProtocol`.
+2. Resolve the RedGIFs MP4 URL using the RedGIFs API.
+3. Download the MP4 to `/var/tmp/redalien/redgifs-<id>/source.mp4`.
+4. Use the installed RedAlien FFmpeg executable to prepare a local MP4 in the same cache directory.
+5. Display a lightweight **Save to Photos** page; no inline video player is used.
+6. Intercept the button's custom URL at the `UIWebView` navigation-delegate level and call iOS 6's Assets Library API to save the cached MP4 to Camera Roll.
 
-The `redgifs-` cache prefix keeps these files separate from ordinary Reddit video IDs. The add-on does not modify the original RedAlien package or its templates.
+Saving is user-initiated. The add-on does not automatically add videos to Photos. The `redgifs-` cache prefix keeps files separate from ordinary Reddit video IDs.
 
 ## 0.2.1 diagnostics
 
@@ -66,6 +66,8 @@ RedAlien is a separate upstream project: https://github.com/spytaspund/redalien
 This repository is an independent compatibility add-on, not an official RedAlien or RedGIFs release. The add-on reuses RedAlien's installed runtime dependency and installed HTML templates without copying or modifying its source files. Preserve upstream copyright and license notices if source files are ever copied into this repository.
 
 
-## Save to Photos (0.2.2)
+## Save to Photos (0.2.3)
 
-When a cached RedGIFs video is ready, the player page includes a **Save to Photos** button. Tapping it asks iOS to add the cached MP4 to the Camera Roll using the iOS 6 Assets Library API. Saving is user-initiated; videos are not added automatically. The result is recorded in `/var/mobile/Library/Logs/RedGIFsCompat.log` and `/tmp/RedGIFsCompat.log`.
+The page shows a single **Save to Photos** button after the MP4 is ready. Its custom URL is intercepted by the UIWebView delegate, rather than relying on UIApplication's `openURL:` path. The save operation uses `ALAssetsLibrary` and logs completion or errors to `/var/mobile/Library/Logs/RedGIFsCompat.log` and `/tmp/RedGIFsCompat.log`.
+
+Inline playback is intentionally not supported in this release.
