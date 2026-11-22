@@ -64,3 +64,8 @@ GitHub Actions builds the ARMv7 package on pushes to the main and integration br
 RedAlien is a separate upstream project: https://github.com/spytaspund/redalien
 
 This repository is an independent compatibility add-on, not an official RedAlien or RedGIFs release. The add-on reuses RedAlien's installed runtime dependency and installed HTML templates without copying or modifying its source files. Preserve upstream copyright and license notices if source files are ever copied into this repository.
+
+
+## Save to Photos (0.2.2)
+
+When a cached RedGIFs video is ready, the player page includes a **Save to Photos** button. Tapping it asks iOS to add the cached MP4 to the Camera Roll using the iOS 6 Assets Library API. Saving is user-initiated; videos are not added automatically. The result is recorded in `/var/mobile/Library/Logs/RedGIFsCompat.log` and `/tmp/RedGIFsCompat.log`.
