@@ -2,7 +2,7 @@
 
 A standalone compatibility add-on for RedGIFs links opened in AlienBlue alongside RedAlien 0.0.4.
 
-> **Status: implementation branch — build and device testing pending.** The existing diagnostic build has verified that the tweak loads in AlienBlue, hooks RAProtocol, recognizes RedGIFs URLs, and resolves an MP4 URL. This branch replaces the direct HTML5 remote-video response with RedAlien's local video playback flow.
+> **Status: diagnostic build 0.2.1 — build and device testing pending.** The existing diagnostic build has verified that the tweak loads in AlienBlue, hooks RAProtocol, recognizes RedGIFs URLs, and resolves an MP4 URL. This branch replaces the direct HTML5 remote-video response with RedAlien's local video playback flow.
 
 ## Target environment
 
@@ -29,6 +29,10 @@ The add-on keeps its own package identifier and does not overwrite RedAlien file
 
 The `redgifs-` cache prefix keeps these files separate from ordinary Reddit video IDs. The add-on does not modify the original RedAlien package or its templates.
 
+## 0.2.1 diagnostics
+
+The media worker now writes to the same persistent log files as the main tweak (`/var/mobile/Library/Logs/RedGIFsCompat.log` and `/tmp/RedGIFsCompat.log`). It records download response/completion and byte count, FFmpeg exit status and stderr tail on failure, output MP4 validation and size, template availability, local server port, and a localhost HTTP byte-range probe against the final MP4. The hook also records RedAlien status-poll requests. These diagnostics are intended to distinguish a processing failure from a local-server or WebView handoff failure.
+
 ## Important compatibility notes
 
 - RedAlien's original `supportsCopy()` returns true on iOS 5 and later. This implementation initially follows that stream-copy approach rather than forcing a transcode.
@@ -48,9 +52,10 @@ GitHub Actions builds the ARMv7 package on pushes to the main and integration br
 - [x] Verify the diagnostic add-on loads and resolves RedGIFs MP4 URLs on-device.
 - [x] Build the FFmpeg playback integration for ARMv7.
 - [x] Inspect the generated Debian package and dependency metadata.
+- [ ] Confirm the 0.2.1 diagnostic build compiles and package metadata is correct.
 - [ ] Confirm the device can download the resolved MP4.
 - [ ] Confirm the installed FFmpeg executable can remux it.
-- [ ] Confirm the local server serves the resulting MP4 and status file.
+- [ ] Confirm the local server serves the resulting MP4 and status file; inspect the new HTTP probe and status-poll log entries.
 - [ ] Confirm playback in AlienBlue on iOS 6.1.3.
 - [ ] Confirm ordinary Reddit video playback remains unchanged.
 
