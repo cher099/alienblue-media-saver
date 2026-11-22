@@ -359,10 +359,13 @@ static NSData *RGDownloadImageData(NSString *urlString, NSError **outError) {
         return nil;
     }
 
-    UIImage *image = [UIImage imageWithData:data];
-    if (!image) {
+    const unsigned char *bytes = (const unsigned char *)[data bytes];
+    BOOL isGIF = [data length] >= 6 &&
+        ((!memcmp(bytes, "GIF87a", 6)) || (!memcmp(bytes, "GIF89a", 6)));
+    UIImage *image = isGIF ? nil : [UIImage imageWithData:data];
+    if (!image && !isGIF) {
         if (outError) *outError = [NSError errorWithDomain:@"RedGIFsCompat" code:23
-            userInfo:[NSDictionary dictionaryWithObject:@"Downloaded data is not a supported image" forKey:NSLocalizedDescriptionKey]];
+            userInfo:[NSDictionary dictionaryWithObject:@"Downloaded data is not a supported image or GIF" forKey:NSLocalizedDescriptionKey]];
         return nil;
     }
     return data;
@@ -388,7 +391,7 @@ static void RGSaveImageURLAtIndex(NSArray *urls, NSUInteger index, NSString *bat
             return;
         }
 
-        NSData *imageData = [downloaded retain];
+        NSData *imageData = downloaded;
         ALAssetsLibrary *library = RGGetAssetsLibrary();
         RGLOG(@"Submitting image to Camera Roll source=%@ item=%lu/%lu url=%@ bytes=%lu",
               sourceID ?: @"(unknown)", (unsigned long)(index + 1), (unsigned long)[urls count],
@@ -402,7 +405,6 @@ static void RGSaveImageURLAtIndex(NSArray *urls, NSUInteger index, NSString *bat
                 RGLOG(@"Camera Roll image save succeeded source=%@ url=%@ assetURL=%@",
                       sourceID ?: @"(unknown)", urlString, assetURL);
             }
-            [imageData release];
             RGSaveImageURLAtIndex(urls, index + 1, batchKey, sourceID);
         }];
         [pool drain];
