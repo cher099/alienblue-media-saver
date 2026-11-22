@@ -15,6 +15,8 @@
 static NSString * const RGRoot = @"/var/tmp/redalien";
 static NSString * const RASupport = @"/Library/Application Support/RedAlien";
 static NSMutableSet *RGBusy = nil;
+static NSMutableSet *RGPhotoSaveBusy = nil;
+static ALAssetsLibrary *RGPhotoLibrary = nil;
 
 static void RGMediaWriteLog(NSString *path, NSData *data) {
     int fd = open([path fileSystemRepresentation], O_WRONLY | O_CREAT | O_APPEND, 0644);
@@ -264,7 +266,50 @@ static BOOL RGProbeLocalFileServer(NSInteger port, NSString *path) {
     return NO;
 }
 
-static NSString *RGPlayerHTML(NSString *path) {
+void RGSaveVideoToPhotos(NSString *videoID) {
+    if (!videoID.length) return;
+    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:
+                               @"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"];
+    if ([videoID rangeOfCharacterFromSet:[allowed invertedSet]].location != NSNotFound) {
+        RGLOG(@"Photo save rejected invalid video ID");
+        return;
+    }
+
+    NSString *path = [[RGDir(videoID) stringByAppendingPathComponent:@"video.mp4"] copy];
+    if (!RGValidMP4(path)) {
+        RGLOG(@"Photo save requested before a valid cached MP4 exists: %@", videoID);
+        [path release];
+        return;
+    }
+
+    @synchronized([NSObject class]) {
+        if (!RGPhotoSaveBusy) RGPhotoSaveBusy = [[NSMutableSet alloc] init];
+        if ([RGPhotoSaveBusy containsObject:videoID]) {
+            RGLOG(@"Photo save already in progress for %@", videoID);
+            [path release];
+            return;
+        }
+        [RGPhotoSaveBusy addObject:videoID];
+        if (!RGPhotoLibrary) RGPhotoLibrary = [[ALAssetsLibrary alloc] init];
+    }
+
+    RGLOG(@"Saving cached video to Photos: %@", path);
+    NSURL *fileURL = [NSURL fileURLWithPath:path];
+    [RGPhotoLibrary writeVideoAtPathToSavedPhotosAlbum:fileURL
+        completionBlock:^(NSURL *assetURL, NSError *error) {
+            if (error) {
+                RGLOG(@"Photos save failed for %@: %@", videoID, error);
+            } else {
+                RGLOG(@"Photos save completed for %@ assetURL=%@", videoID, assetURL);
+            }
+            @synchronized([NSObject class]) {
+                [RGPhotoSaveBusy removeObject:videoID];
+            }
+            [path release];
+        }];
+}
+
+static NSString *RGPlayerHTML(NSString *path, NSString *videoID) {
     NSString *html = RGTemplate(@"vPlayer.html");
     if (!html) { RGLOG(@"RedAlien vPlayer.html template missing at %@", [RASupport stringByAppendingPathComponent:@"vPlayer.html"]); return nil; }
     NSString *localPath = [path stringByReplacingOccurrencesOfString:@"/private" withString:@""];
@@ -277,7 +322,17 @@ static NSString *RGPlayerHTML(NSString *path) {
     RGLOG(@"Player template loaded; serverPort=%ld file=%@ url=%@", (long)port, path, url);
     BOOL served = RGProbeLocalFileServer(port, localPath);
     RGLOG(@"Local MP4 HTTP probe=%@", served ? @"PASS" : @"FAIL");
-    return [html stringByReplacingOccurrencesOfString:@"{{VIDEO_URL}}" withString:url];
+    html = [html stringByReplacingOccurrencesOfString:@"{{VIDEO_URL}}" withString:url];
+    NSString *saveButton = [NSString stringWithFormat:
+        @"<button id=\\"rg-save-photo\\" style=\\"position:absolute;z-index:9999;top:12px;right:12px;padding:9px 12px;background:rgba(30,30,30,.88);border:1px solid #aaa;border-radius:5px;color:#fff;font:14px Helvetica,Arial,sans-serif;\\" onclick=\\"this.innerHTML='Saving...';window.location.href='redgifscompat://save/%@';return false;\\">Save to Photos</button>",
+        videoID];
+    NSRange bodyEnd = [html rangeOfString:@"</body>" options:NSCaseInsensitiveSearch];
+    if (bodyEnd.location != NSNotFound) {
+        html = [html stringByReplacingCharactersInRange:bodyEnd withString:[saveButton stringByAppendingString:@"</body>"]];
+    } else {
+        html = [html stringByAppendingString:saveButton];
+    }
+    return html;
 }
 static void *RGWorker(void *arg) {
     NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
@@ -333,7 +388,7 @@ NSString *RGPlaybackHTMLForVideo(NSString *videoID, NSString *mediaURL, NSString
     NSString *dir = RGDir(videoID);
     if (!dir) return nil;
     NSString *video = [dir stringByAppendingPathComponent:@"video.mp4"];
-    if (RGValidMP4(video)) { RGLOG(@"Cached video found id=%@ path=%@", videoID, video); return RGPlayerHTML(video); }
+    if (RGValidMP4(video)) { RGLOG(@"Cached video found id=%@ path=%@", videoID, video); return RGPlayerHTML(video, videoID); }
     @synchronized([NSObject class]) {
         if (!RGBusy) RGBusy = [[NSMutableSet alloc] init];
         if ([RGBusy containsObject:videoID]) { RGLOG(@"Video %@ already processing; returning loading HTML", videoID); return RGLoadingHTML(videoID); }
