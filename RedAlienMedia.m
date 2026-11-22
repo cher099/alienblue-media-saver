@@ -1,4 +1,5 @@
 #import "RedAlienMedia.h"
+#import <UIKit/UIKit.h>
 #import <objc/message.h>
 #import <pthread.h>
 #import <sys/wait.h>
@@ -16,7 +17,7 @@ static NSString * const RGRoot = @"/var/tmp/redalien";
 static NSString * const RASupport = @"/Library/Application Support/RedAlien";
 static NSMutableSet *RGBusy = nil;
 static NSMutableSet *RGPhotoSaveBusy = nil;
-static id RGPhotoLibrary = nil;
+static id RGPhotoSaveTargetInstance = nil;
 
 static void RGMediaWriteLog(NSString *path, NSData *data) {
     int fd = open([path fileSystemRepresentation], O_WRONLY | O_CREAT | O_APPEND, 0644);
@@ -49,6 +50,28 @@ static void RGMediaLog(NSString *format, ...) {
     NSLog(@"[RedGIFsCompat][Media] %@", message);
 }
 #define RGLOG(fmt, ...) RGMediaLog((fmt), ##__VA_ARGS__)
+
+@interface RGPhotoSaveTarget : NSObject
+- (void)video:(NSString *)videoPath didFinishSavingWithError:(NSError *)error contextInfo:(void *)contextInfo;
+@end
+
+@implementation RGPhotoSaveTarget
+- (void)video:(NSString *)videoPath didFinishSavingWithError:(NSError *)error contextInfo:(void *)contextInfo {
+    NSString *videoID = (NSString *)contextInfo;
+    if (error) {
+        RGLOG(@"UIKit Camera Roll save failed for %@ path=%@: %@ (domain=%@ code=%ld userInfo=%@)",
+              videoID ?: @"(unknown)", videoPath, error, [error domain], (long)[error code], [error userInfo]);
+    } else {
+        RGLOG(@"UIKit Camera Roll save succeeded for %@ path=%@",
+              videoID ?: @"(unknown)", videoPath);
+    }
+
+    @synchronized([NSObject class]) {
+        if (videoID && RGPhotoSaveBusy) [RGPhotoSaveBusy removeObject:videoID];
+    }
+    [videoID release];
+}
+@end
 
 @interface RGDownloader : NSObject {
     NSFileHandle *_file;
@@ -243,12 +266,23 @@ void RGSaveVideoToPhotos(NSString *videoID) {
         return;
     }
 
-    NSString *path = [RGDir(videoID) stringByAppendingPathComponent:@"video.mp4"];
-    if (!RGValidMP4(path)) {
-        RGLOG(@"Photo save requested before a valid cached MP4 exists: %@", videoID);
+    NSString *cachePath = [RGDir(videoID) stringByAppendingPathComponent:@"video.mp4"];
+    if (!RGValidMP4(cachePath)) {
+        RGLOG(@"Photo save requested before a valid cached MP4 exists: %@ path=%@", videoID, cachePath);
         return;
     }
 
+    // UIKit's legacy save API accepts a filesystem path directly and reports
+    // completion through a selector, which is suitable for this iOS 6 target.
+    NSString *photosPath = [cachePath stringByResolvingSymlinksInPath];
+    BOOL compatible = UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(photosPath);
+    if (!compatible) {
+        RGLOG(@"UIKit reports video is not compatible with the Saved Photos album: %@ path=%@",
+              videoID, photosPath);
+        return;
+    }
+
+    RGPhotoSaveTarget *target = nil;
     @synchronized([NSObject class]) {
         if (!RGPhotoSaveBusy) RGPhotoSaveBusy = [[NSMutableSet alloc] init];
         if ([RGPhotoSaveBusy containsObject:videoID]) {
@@ -256,31 +290,16 @@ void RGSaveVideoToPhotos(NSString *videoID) {
             return;
         }
         [RGPhotoSaveBusy addObject:videoID];
-        if (!RGPhotoLibrary) {
-            Class libraryClass = NSClassFromString(@"ALAssetsLibrary");
-            if (libraryClass) RGPhotoLibrary = [[libraryClass alloc] init];
+        if (!RGPhotoSaveTargetInstance) {
+            RGPhotoSaveTargetInstance = [[RGPhotoSaveTarget alloc] init];
         }
+        target = (RGPhotoSaveTarget *)RGPhotoSaveTargetInstance;
     }
 
-    RGLOG(@"Saving cached video to Photos: %@", path);
-    NSURL *fileURL = [NSURL fileURLWithPath:path];
-    SEL saveSelector = NSSelectorFromString(@"writeVideoAtPathToSavedPhotosAlbum:completionBlock:");
-    if (!RGPhotoLibrary || ![RGPhotoLibrary respondsToSelector:saveSelector]) {
-        RGLOG(@"Photos save unavailable: ALAssetsLibrary API not present");
-        @synchronized([NSObject class]) { [RGPhotoSaveBusy removeObject:videoID]; }
-        return;
-    }
-    ((void (*)(id, SEL, NSURL *, id))objc_msgSend)(RGPhotoLibrary, saveSelector, fileURL,
-        ^(NSURL *assetURL, NSError *error) {
-            if (error) {
-                RGLOG(@"Photos save failed for %@: %@", videoID, error);
-            } else {
-                RGLOG(@"Photos save completed for %@ assetURL=%@", videoID, assetURL);
-            }
-            @synchronized([NSObject class]) {
-                [RGPhotoSaveBusy removeObject:videoID];
-            }
-        });
+    NSString *contextVideoID = [videoID copy];
+    RGLOG(@"Submitting cached video to UIKit Camera Roll: %@ path=%@", videoID, photosPath);
+    UISaveVideoAtPathToSavedPhotosAlbum(photosPath, target,
+        @selector(video:didFinishSavingWithError:contextInfo:), contextVideoID);
 }
 
 static void *RGWorker(void *arg) {
