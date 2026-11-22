@@ -268,7 +268,7 @@ static void RGInstallActionSheetDelegateHook(id delegate) {
         MSHookMessageEx(delegateClass, selector,
                         (IMP)RGHookActionSheetDelegateClickedButton, &original);
         if (original) {
-            [RGActionSheetDelegateOriginalIMPs setObject:[NSValue valueWithPointer:original]
+            [RGActionSheetDelegateOriginalIMPs setObject:[NSValue valueWithBytes:&original objCType:@encode(IMP)]
                                                   forKey:classKey];
             RGLog(@"Hooked AlienBlue Share-menu callback on %@", classKey);
         }
@@ -292,9 +292,10 @@ static void RGHookActionSheetDelegateClickedButton(id delegate, SEL command, id 
     }
 
     NSString *classKey = NSStringFromClass([delegate class]);
-    IMP original = nil;
+    IMP original = NULL;
     @synchronized([NSObject class]) {
-        original = [[RGActionSheetDelegateOriginalIMPs objectForKey:classKey] pointerValue];
+        NSValue *originalValue = [RGActionSheetDelegateOriginalIMPs objectForKey:classKey];
+        if (originalValue) [originalValue getValue:&original];
     }
     if (original) {
         ((void (*)(id, SEL, id, NSInteger))original)(delegate, command, sheet, buttonIndex);
