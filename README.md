@@ -95,6 +95,14 @@ make package FINALPACKAGE=1
 
 GitHub Actions also builds the Debian package and uploads it as a workflow artifact. A successful build confirms that the package compiles for ARMv7; it does not replace testing on the target device and iOS version.
 
+## License and copyright
+
+Copyright (C) 2026 Cherwin Jay.
+
+The original project code in this repository is licensed under the **GNU General Public License v3.0 only (GPL-3.0-only)**. See [LICENSE](LICENSE) for the complete license text.
+
+This license applies to the original code authored for this project. Third-party software, frameworks, tools, services, trademarks, and dependencies—including AlienBlue, RedAlien, FFmpeg, Theos, and MobileSubstrate—remain subject to their respective licenses and terms. This repository does not grant rights to third-party names, trademarks, or assets.
+
 ## Credits and attribution
 
 - **ChatGPT / OpenAI:** AI coding partner used throughout implementation, debugging, and documentation.
