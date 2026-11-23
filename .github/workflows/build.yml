@@ -2,30 +2,51 @@ name: Build iOS tweak
 
 on:
   push:
-    branches: [ main, feature/redalien-ffmpeg-playback, fix/save-to-photos-all-media ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
+
+# The build only needs to read this repository. No write token is required.
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     steps:
       - name: Checkout project
-        uses: actions/checkout@v4
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
 
       - name: Install system prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y bash curl sudo build-essential git perl make fakeroot dpkg-dev xz-utils libtinfo6
+          sudo apt-get install -y bash curl sudo build-essential git perl make fakeroot rsync zip libxml2 dpkg-dev xz-utils libtinfo6
+          sudo update-alternatives --set fakeroot /usr/bin/fakeroot-sysv
 
-      - name: Install Theos, toolchain, and iOS SDK
+      - name: Install pinned Theos, toolchain, and iOS SDK
         env:
           THEOS: ${{ runner.temp }}/theos
-          CI: "1"
+          THEOS_COMMIT: 8167f59de02fd32cf45b16bfcb1330dfa5c9974c
         run: |
-          export THEOS
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+          # Pin Theos itself instead of allowing the installer to clone a moving default branch.
+          git clone --filter=blob:none --no-checkout https://github.com/theos/theos.git "$THEOS"
+          git -C "$THEOS" fetch --depth=1 origin "$THEOS_COMMIT"
+          git -C "$THEOS" checkout --detach "$THEOS_COMMIT"
+          git -C "$THEOS" submodule update --init --recursive
+
+          # Pin the Linux iOS toolchain and the exact SDK selected by Makefile.
+          mkdir -p "$THEOS/toolchain" "$THEOS/sdks"
+          curl -fsSL "https://github.com/L1ghtmann/llvm-project/releases/download/test-210562a/iOSToolchain-x86_64.tar.xz" | tar -xJf - -C "$THEOS/toolchain"
+          curl -fsSL "https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz" | tar -xJf - -C "$THEOS/sdks"
+
+          test "$(git -C "$THEOS" rev-parse HEAD)" = "$THEOS_COMMIT"
+          test -x "$THEOS/toolchain/linux/iphone/bin/clang"
+          test -d "$THEOS/sdks/iPhoneOS16.5.sdk"
 
       - name: Build ARMv7 package
         env:
@@ -34,8 +55,10 @@ jobs:
           make package FINALPACKAGE=1
 
       - name: Upload Debian package
-        uses: actions/upload-artifact@v4
+        # actions/upload-artifact v7.0.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: RedGIFsCompat-deb
           path: packages/*.deb
           if-no-files-found: error
+          retention-days: 14
